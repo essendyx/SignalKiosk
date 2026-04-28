@@ -1,7 +1,7 @@
 <template>
   <div class="shell">
     <aside>
-      <h1>signalKiosk</h1>
+      <h1>SignalKiosk</h1>
       <router-link to="/">Dashboard</router-link>
       <router-link to="/contents">Inhalte</router-link>
       <router-link to="/presets">Presets</router-link>

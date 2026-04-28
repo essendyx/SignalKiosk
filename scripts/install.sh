@@ -6,7 +6,7 @@ if [[ "${EUID}" -ne 0 ]]; then
   exit 1
 fi
 
-PROJECT_DIR="/opt/signalKiosk"
+PROJECT_DIR="/opt/SignalKiosk"
 ADMIN_PORT_DEFAULT="8080"
 
 echo "[1/8] Abhaengigkeiten installieren"
@@ -66,7 +66,7 @@ chmod +x /usr/local/bin/signalKiosk-host-kiosk
 
 cat >/etc/systemd/system/signalkiosk-kiosk.service <<'EOF'
 [Unit]
-Description=signalKiosk Host Chromium Kiosk
+Description=SignalKiosk Host Chromium Kiosk
 After=network-online.target docker.service
 Wants=network-online.target
 

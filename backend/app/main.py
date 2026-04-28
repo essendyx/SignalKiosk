@@ -13,7 +13,7 @@ from .schemas import AuthProfileIn, AuthProfileOut, ContentIn, ContentListOut, C
 from .security import create_access_token, decrypt_secret, encrypt_secret, hash_password, hash_token, verify_password
 from .services import advance_rotation, ensure_playback_state
 
-app = FastAPI(title="signalKiosk", version="1.1.0")
+app = FastAPI(title="SignalKiosk", version="1.1.0")
 
 
 def _mask_auth_config(raw: dict[str, str]) -> dict[str, str]:

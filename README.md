@@ -1,6 +1,6 @@
-# signalKiosk
+# SignalKiosk
 
-signalKiosk ist eine lokal betreibbare Kiosk- und Digital-Signage-Software fuer Linux.
+SignalKiosk ist eine lokal betreibbare Kiosk- und Digital-Signage-Software fuer Linux.
 Der Server hostet Administration und Playback. Die Anzeige laeuft lokal im Chromium-Vollbild.
 
 ## Frische Linux-Installation (Ubuntu 22.04/24.04)
@@ -15,8 +15,8 @@ sudo apt -y install git
 ### 2) Repository holen
 
 ```bash
-git clone <DEIN-REPO-URL> signalKiosk
-cd signalKiosk
+git clone https://github.com/essendyx/SignalKiosk.git
+cd SignalKiosk
 ```
 
 ### 3) Installer ausfuehren
@@ -27,7 +27,7 @@ sudo bash scripts/install.sh
 
 Der Installer erledigt automatisch:
 - Docker Engine + Docker Compose Plugin (falls nicht vorhanden)
-- Projektinstallation nach `/opt/signalKiosk`
+- Projektinstallation nach `/opt/SignalKiosk`
 - `.env` aus `.env.example`
 - `docker compose up -d --build`
 - systemd-Dienst `signalkiosk-kiosk.service`
@@ -37,7 +37,7 @@ Der Installer erledigt automatisch:
 
 ```bash
 docker ps
-docker compose -f /opt/signalKiosk/docker-compose.yml ps
+docker compose -f /opt/SignalKiosk/docker-compose.yml ps
 systemctl status signalkiosk-kiosk.service
 ```
 
@@ -52,7 +52,7 @@ Direkt nach Erstlogin aendern.
 
 ## Konfiguration
 
-Datei: `/opt/signalKiosk/.env`
+Datei: `/opt/SignalKiosk/.env`
 
 Wichtige Variablen:
 - `ADMIN_PORT=8080`
@@ -64,7 +64,7 @@ Wichtige Variablen:
 Nach Aenderungen:
 
 ```bash
-cd /opt/signalKiosk
+cd /opt/SignalKiosk
 docker compose up -d
 sudo systemctl restart signalkiosk-kiosk.service
 ```
@@ -72,7 +72,7 @@ sudo systemctl restart signalkiosk-kiosk.service
 ## Betrieb
 
 ```bash
-cd /opt/signalKiosk
+cd /opt/SignalKiosk
 docker compose logs -f app
 docker compose logs -f frontend
 sudo journalctl -u signalkiosk-kiosk.service -f
