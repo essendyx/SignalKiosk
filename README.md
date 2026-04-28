@@ -98,6 +98,7 @@ Primary config file: `/opt/SignalKiosk/.env`
 | `SECRET_ENCRYPTION_KEY` | Secret key (auto-generated if empty) | `` |
 | `KIOSK_MODE` | Kiosk runtime mode | `host` |
 | `KIOSK_URL` | URL opened by kiosk browser | `http://127.0.0.1:8080/playback` |
+| `KIOSK_DISABLE_WEB_SECURITY` | Disable Chromium web security checks (CORS/certs, unsafe) | `false` |
 
 Apply config changes:
 

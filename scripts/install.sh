@@ -45,18 +45,24 @@ cat >/usr/local/bin/signalKiosk-host-kiosk <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 export DISPLAY=:0
+export KIOSK_DISABLE_WEB_SECURITY="${KIOSK_DISABLE_WEB_SECURITY:-false}"
 if command -v xset >/dev/null 2>&1; then
   xset s off || true
   xset -dpms || true
   xset s noblank || true
 fi
 while true; do
+  EXTRA_FLAGS=""
+  if [ "$KIOSK_DISABLE_WEB_SECURITY" = "true" ]; then
+    EXTRA_FLAGS="--disable-web-security --disable-site-isolation-trials --disable-features=IsolateOrigins,site-per-process --allow-running-insecure-content --ignore-certificate-errors"
+  fi
   chromium-browser \
     --kiosk \
     --no-first-run \
     --disable-session-crashed-bubble \
     --disable-infobars \
     --autoplay-policy=no-user-gesture-required \
+    $EXTRA_FLAGS \
     "http://127.0.0.1:${ADMIN_PORT}/playback"
   sleep 2
 done

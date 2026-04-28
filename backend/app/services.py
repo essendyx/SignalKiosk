@@ -55,7 +55,12 @@ def ensure_playback_state(db: Session) -> PlaybackState:
 
 def advance_rotation(db: Session, now_utc: datetime) -> PlaybackState:
     state = ensure_playback_state(db)
-    if state.ends_at and now_utc < state.ends_at and state.active_content_id:
+    ends_at = state.ends_at
+    if ends_at and ends_at.tzinfo is None:
+        now_cmp = now_utc.replace(tzinfo=None)
+    else:
+        now_cmp = now_utc
+    if ends_at and now_cmp < ends_at and state.active_content_id:
         return state
 
     decision = evaluate_schedule(db, now_utc)
@@ -66,11 +71,12 @@ def advance_rotation(db: Session, now_utc: datetime) -> PlaybackState:
         ov = db.execute(select(OverrideEvent).where(OverrideEvent.status == "active", OverrideEvent.ends_at > now_utc).order_by(OverrideEvent.priority.desc())).scalars().first()
         if ov:
             payload = json.loads(ov.payload_json)
+            payload["reason"] = decision.reason
             state.active_override_id = ov.id
             state.active_content_id = payload.get("content_id")
             state.started_at = now_utc
             state.ends_at = ov.ends_at
-            state.state_json = ov.payload_json
+            state.state_json = json.dumps(payload)
     elif decision.preset_id:
         items = db.execute(
             select(PresetItem).where(PresetItem.preset_id == decision.preset_id, PresetItem.enabled.is_(True)).order_by(PresetItem.position.asc())
@@ -94,7 +100,19 @@ def advance_rotation(db: Session, now_utc: datetime) -> PlaybackState:
                     next_index = len(items) - 1
 
             pick = items[next_index]
-            duration = pick.duration_seconds or db.get(Content, pick.content_id).default_duration_seconds
+            content_obj = db.get(Content, pick.content_id)
+            if not content_obj:
+                state.active_content_id = None
+                state.active_override_id = None
+                state.started_at = now_utc
+                state.ends_at = None
+                state.state_json = json.dumps({"reason": "preset references missing content"})
+                db.add(state)
+                db.commit()
+                db.refresh(state)
+                return state
+
+            duration = pick.duration_seconds or content_obj.default_duration_seconds
             state.active_content_id = pick.content_id
             state.active_override_id = None
             state.started_at = now_utc

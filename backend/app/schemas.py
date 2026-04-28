@@ -47,6 +47,16 @@ class PresetItemIn(BaseModel):
     transition: str | None = None
 
 
+class PresetItemOut(PresetItemIn):
+    id: str
+    preset_id: str
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class PresetIn(BaseModel):
     name: str
     description: str | None = None
