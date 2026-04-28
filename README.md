@@ -1,39 +1,76 @@
 # SignalKiosk
 
-SignalKiosk ist eine lokal betreibbare Kiosk- und Digital-Signage-Software fuer Linux.
-Der Server hostet Administration und Playback. Die Anzeige laeuft lokal im Chromium-Vollbild.
+![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-0b3d91.svg)
+![Docker Compose](https://img.shields.io/badge/Runtime-Docker%20Compose-1d63ed.svg)
+![Backend: FastAPI](https://img.shields.io/badge/Backend-FastAPI-0f766e.svg)
+![Frontend: Vue%203](https://img.shields.io/badge/Frontend-Vue%203-2f855a.svg)
+![Language: TypeScript](https://img.shields.io/badge/Language-TypeScript-1f4fa3.svg)
 
-## Frische Linux-Installation (Ubuntu 22.04/24.04)
+SignalKiosk is a self-hosted kiosk and digital-signage platform for Linux.
+It provides a web-based admin interface for content and scheduling, plus local fullscreen playback in Chromium for reliable single-screen operation.
 
-### 1) Server vorbereiten
+## Table of Contents
+
+- [Key Capabilities](#key-capabilities)
+- [Architecture](#architecture)
+- [Quick Start (Ubuntu 22.04/24.04)](#quick-start-ubuntu-22042404)
+- [Configuration](#configuration)
+- [Operations](#operations)
+- [Backup and Restore](#backup-and-restore)
+- [Troubleshooting](#troubleshooting)
+- [Development](#development)
+- [Security Notes](#security-notes)
+- [License](#license)
+
+## Key Capabilities
+
+- Local-first kiosk operation with server and playback on the same machine
+- Web admin UI for managing playback and system behavior
+- Fullscreen Chromium kiosk mode via `systemd` service
+- Containerized runtime with Docker Compose
+- FastAPI backend, Vue 3 + TypeScript frontend
+
+## Architecture
+
+- `backend/`: FastAPI application, scheduling/playback logic, SQLAlchemy, Alembic, tests
+- `frontend/`: Vue 3 + TypeScript admin application (Vite)
+- `kiosk/`: Optional container kiosk runtime (Compose profile: `kiosk-container`)
+- `scripts/`: Installation and operational helper scripts
+
+Default production mode is host-based kiosk startup via `signalkiosk-kiosk.service`.
+
+## Quick Start (Ubuntu 22.04/24.04)
+
+### 1) Prepare host
 
 ```bash
 sudo apt update && sudo apt -y upgrade
 sudo apt -y install git
 ```
 
-### 2) Repository holen
+### 2) Clone repository
 
 ```bash
 git clone https://github.com/essendyx/SignalKiosk.git
 cd SignalKiosk
 ```
 
-### 3) Installer ausfuehren
+### 3) Run installer
 
 ```bash
 sudo bash scripts/install.sh
 ```
 
-Der Installer erledigt automatisch:
-- Docker Engine + Docker Compose Plugin (falls nicht vorhanden)
-- Projektinstallation nach `/opt/SignalKiosk`
-- `.env` aus `.env.example`
-- `docker compose up -d --build`
-- systemd-Dienst `signalkiosk-kiosk.service`
-- Chromium im echten Kiosk-Vollbild auf `http://127.0.0.1:<ADMIN_PORT>/playback`
+The installer automatically:
 
-### 4) Nach dem Install pruefen
+- Installs Docker Engine and Docker Compose plugin (if missing)
+- Installs project to `/opt/SignalKiosk`
+- Creates `.env` from `.env.example`
+- Starts services with `docker compose up -d --build`
+- Creates and enables `signalkiosk-kiosk.service`
+- Starts Chromium in fullscreen kiosk mode on `http://127.0.0.1:<ADMIN_PORT>/playback`
+
+### 4) Validate installation
 
 ```bash
 docker ps
@@ -41,27 +78,28 @@ docker compose -f /opt/SignalKiosk/docker-compose.yml ps
 systemctl status signalkiosk-kiosk.service
 ```
 
-Admin UI im Netzwerk:
-- `http://<SERVER-IP>:8080` (oder dein `ADMIN_PORT`)
+Admin UI:
 
-Standard-Login:
-- Benutzer: `admin`
-- Passwort: `admin123!`
+- `http://<SERVER-IP>:8080` (or your configured `ADMIN_PORT`)
 
-Direkt nach Erstlogin aendern.
+Default credentials:
 
-## Konfiguration
+- Username: `admin`
+- Password: `admin123!`
 
-Datei: `/opt/SignalKiosk/.env`
+## Configuration
 
-Wichtige Variablen:
-- `ADMIN_PORT=8080`
-- `DATABASE_URL=sqlite:////data/localkiosk.db`
-- `SECRET_ENCRYPTION_KEY=` (leer = auto-generiert und persistent gespeichert)
-- `KIOSK_MODE=host`
-- `KIOSK_URL=http://127.0.0.1:8080/playback`
+Primary config file: `/opt/SignalKiosk/.env`
 
-Nach Aenderungen:
+| Variable | Description | Example |
+| --- | --- | --- |
+| `ADMIN_PORT` | Admin and playback web port | `8080` |
+| `DATABASE_URL` | SQLite database location | `sqlite:////data/localkiosk.db` |
+| `SECRET_ENCRYPTION_KEY` | Secret key (auto-generated if empty) | `` |
+| `KIOSK_MODE` | Kiosk runtime mode | `host` |
+| `KIOSK_URL` | URL opened by kiosk browser | `http://127.0.0.1:8080/playback` |
+
+Apply config changes:
 
 ```bash
 cd /opt/SignalKiosk
@@ -69,7 +107,9 @@ docker compose up -d
 sudo systemctl restart signalkiosk-kiosk.service
 ```
 
-## Betrieb
+## Operations
+
+Runtime logs:
 
 ```bash
 cd /opt/SignalKiosk
@@ -78,7 +118,7 @@ docker compose logs -f frontend
 sudo journalctl -u signalkiosk-kiosk.service -f
 ```
 
-## Backup und Restore
+## Backup and Restore
 
 ### Backup
 
@@ -96,213 +136,39 @@ docker compose up -d
 
 ## Troubleshooting
 
-- Schwarzer Bildschirm: lokal `xhost +local:` ausfuehren und Dienst neu starten.
-- API nicht erreichbar: `docker compose logs -f app` pruefen.
-- Kiosk startet nicht: `journalctl -u signalkiosk-kiosk.service -n 200`.
-- Port belegt: `ADMIN_PORT` in `.env` aendern und neu starten.
+- Black screen on local display: run `xhost +local:` on host and restart kiosk service
+- API unreachable: inspect backend logs via `docker compose logs -f app`
+- Kiosk not launching: inspect `journalctl -u signalkiosk-kiosk.service -n 200`
+- Port conflict: update `ADMIN_PORT` in `.env` and restart services
 
-## Entwicklung
+## Development
+
+Start stack:
 
 ```bash
 docker compose up -d --build
+```
+
+Run backend tests:
+
+```bash
 docker compose run --rm app pytest -q
 ```
 
-## Architektur (kurz)
+Frontend local workflow:
 
-- `backend/`: FastAPI, Scheduler, Playback Engine, Webhook Engine, SQLAlchemy, Alembic
-- `frontend/`: Vue 3 + TypeScript Admin-Oberflaeche
-- `kiosk/`: optionaler Container-Kiosk (Compose-Profil `kiosk-container`)
-
-Default ist Host-Kiosk per systemd (produktionsnah fuer Single-Screen Linux).
-
-## Lizenz (Apache-2.0)
-
-Dieses Projekt ist unter der Apache License 2.0 lizenziert.
-
-Der offizielle Lizenztext (wie auf GitHub bei `Apache-2.0`) lautet:
-
-```text
-Apache License
-Version 2.0, January 2004
-http://www.apache.org/licenses/
-
-TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
-
-1. Definitions.
-
-"License" shall mean the terms and conditions for use, reproduction,
-and distribution as defined by Sections 1 through 9 of this document.
-
-"Licensor" shall mean the copyright owner or entity authorized by
-the copyright owner that is granting the License.
-
-"Legal Entity" shall mean the union of the acting entity and all
-other entities that control, are controlled by, or are under common
-control with that entity. For the purposes of this definition,
-"control" means (i) the power, direct or indirect, to cause the
-otherwise, or (ii) ownership of fifty percent (50%) or more of the
-outstanding shares, or (iii) beneficial ownership of such entity.
-
-"You" (or "Your") shall mean an individual or Legal Entity
-exercising permissions granted by this License.
-
-"Source" form shall mean the preferred form for making modifications,
-including but not limited to software source code, documentation
-source, and configuration files.
-
-"Object" form shall mean any form resulting from mechanical
-transformation or translation of a Source form, including but
-not limited to compiled object code, generated documentation,
-and conversions to other media types.
-
-"Work" shall mean the work of authorship, whether in Source or
-Object form, made available under the License, as indicated by a
-copyright notice that is included in or attached to the work
-(an example is provided in the Appendix below).
-
-"Derivative Works" shall mean any work, whether in Source or Object
-form, that is based on (or derived from) the Work and for which the
-editorial revisions, annotations, elaborations, or other modifications
-represent, as a whole, an original work of authorship. For the purposes
-of this License, Derivative Works shall not include works that remain
-separable from, or merely link (or bind by name) to the interfaces of,
-the Work and Derivative Works thereof.
-
-"Contribution" shall mean any work of authorship, including
-the original version of the Work and any modifications or additions
-to that Work or Derivative Works thereof, that is intentionally
-submitted to Licensor for inclusion in the Work by the copyright owner
-or by an individual or Legal Entity authorized to submit on behalf of
-the copyright owner. For the purposes of this definition, "submitted"
-means any form of electronic, verbal, or written communication sent
-to the Licensor or its representatives, including but not limited to
-communication on electronic mailing lists, source code control systems,
-and issue tracking systems that are managed by, or on behalf of, the
-Licensor for the purpose of discussing and improving the Work, but
-excluding communication that is conspicuously marked or otherwise
-designated in writing by the copyright owner as "Not a Contribution."
-
-"Contributor" shall mean Licensor and any individual or Legal Entity
-on behalf of whom a Contribution has been received by Licensor and
-subsequently incorporated within the Work.
-
-2. Grant of Copyright License. Subject to the terms and conditions of
-this License, each Contributor hereby grants to You a perpetual,
-worldwide, non-exclusive, no-charge, royalty-free, irrevocable
-copyright license to reproduce, prepare Derivative Works of,
-publicly display, publicly perform, sublicense, and distribute the
-Work and such Derivative Works in Source or Object form.
-
-3. Grant of Patent License. Subject to the terms and conditions of
-this License, each Contributor hereby grants to You a perpetual,
-worldwide, non-exclusive, no-charge, royalty-free, irrevocable
-(except as stated in this section) patent license to make, have made,
-use, offer to sell, sell, import, and otherwise transfer the Work,
-where such license applies only to those patent claims licensable
-by such Contributor that are necessarily infringed by their
-Contribution(s) alone or by combination of their Contribution(s)
-with the Work to which such Contribution(s) was submitted. If You
-institute patent litigation against any entity (including a
-cross-claim or counterclaim in a lawsuit) alleging that the Work
-or a Contribution incorporated within the Work constitutes direct
-or contributory patent infringement, then any patent licenses
-granted to You under this License for that Work shall terminate
-as of the date such litigation is filed.
-
-4. Redistribution. You may reproduce and distribute copies of the
-Work or Derivative Works thereof in any medium, with or without
-modifications, and in Source or Object form, provided that You
-meet the following conditions:
-
-(a) You must give any other recipients of the Work or
-Derivative Works a copy of this License; and
-
-(b) You must cause any modified files to carry prominent notices
-stating that You changed the files; and
-
-(c) You must retain, in the Source form of any Derivative Works
-that You distribute, all copyright, patent, trademark, and
-attribution notices from the Source form of the Work,
-excluding those notices that do not pertain to any part of
-the Derivative Works; and
-
-(d) If the Work includes a "NOTICE" text file as part of its
-distribution, then any Derivative Works that You distribute must
-include a readable copy of the attribution notices contained
-within such NOTICE file, excluding those notices that do not
-pertain to any part of the Derivative Works, in at least one
-of the following places: within a NOTICE text file distributed
-as part of the Derivative Works; within the Source form or
-documentation, if provided along with the Derivative Works; or,
-within a display generated by the Derivative Works, if and
-wherever such third-party notices normally appear. The contents
-of the NOTICE file are for informational purposes only and
-do not modify the License. You may add Your own attribution
-notices within Derivative Works that You distribute, alongside
-or as an addendum to the NOTICE text from the Work, provided
-that such additional attribution notices cannot be construed
-as modifying the License.
-
-You may add Your own copyright statement to Your modifications and
-may provide additional or different license terms and conditions
-for use, reproduction, or distribution of Your modifications, or
-for any such Derivative Works as a whole, provided Your use,
-reproduction, and distribution of the Work otherwise complies with
-the conditions stated in this License.
-
-5. Submission of Contributions. Unless You explicitly state otherwise,
-any Contribution intentionally submitted for inclusion in the Work
-by You to the Licensor shall be under the terms and conditions of
-this License, without any additional terms or conditions.
-Notwithstanding the above, nothing herein shall supersede or modify
-the terms of any separate license agreement you may have executed
-with Licensor regarding such Contributions.
-
-6. Trademarks. This License does not grant permission to use the trade
-names, trademarks, service marks, or product names of the Licensor,
-except as required for reasonable and customary use in describing the
-origin of the Work and reproducing the content of the NOTICE file.
-
-7. Disclaimer of Warranty. Unless required by applicable law or
-agreed to in writing, Licensor provides the Work (and each
-Contributor provides its Contributions) on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
-implied, including, without limitation, any warranties or conditions
-of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
-PARTICULAR PURPOSE. You are solely responsible for determining the
-appropriateness of using or redistributing the Work and assume any
-risks associated with Your exercise of permissions under this License.
-
-8. Limitation of Liability. In no event and under no legal theory,
-whether in tort (including negligence), contract, or otherwise,
-unless required by applicable law (such as deliberate and grossly
-negligent acts) or agreed to in writing, shall any Contributor be
-liable to You for damages, including any direct, indirect, special,
-incidental, or consequential damages of any character arising as a
-result of this License or out of the use or inability to use the
-Work (including but not limited to damages for loss of goodwill,
-work stoppage, computer failure or malfunction, or any and all
-other commercial damages or losses), even if such Contributor
-has been advised of the possibility of such damages.
-
-9. Accepting Warranty or Additional Liability. While redistributing
-the Work or Derivative Works thereof, You may choose to offer,
-and charge a fee for, acceptance of support, warranty, indemnity,
-or other liability obligations and/or rights consistent with this
-License. However, in accepting such obligations, You may act only
-on Your own behalf and on Your sole responsibility, not on behalf
-of any other Contributor, and only if You agree to indemnify,
-defend, and hold each Contributor harmless for any liability
-incurred by, or claims asserted against, such Contributor by reason
-of your accepting any such warranty or additional liability.
-
-END OF TERMS AND CONDITIONS
+```bash
+cd frontend
+npm install
+npm run dev
 ```
 
-Wo der Lizenztext hin soll:
+## Security Notes
 
-- `LICENSE` im Projekt-Root: kompletter Apache-2.0-Text (bereits vorhanden)
-- `README.md`: kurzer Lizenzhinweis plus Verweis auf `LICENSE` (nun enthalten)
-- Optional `NOTICE` im Projekt-Root: nur noetig, wenn zusaetzliche Attributionen verteilt werden muessen
-- Quellcode-Dateien: kein voller Lizenztext pro Datei noetig; optional kurzer Header laut Apache-Appendix
+- Change the default admin password immediately after first login
+- Keep `.env` and database backups private
+- Restrict network exposure of `ADMIN_PORT` where possible
+
+## License
+
+Licensed under Apache-2.0. See `LICENSE`.
