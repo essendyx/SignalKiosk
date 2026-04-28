@@ -1,0 +1,64 @@
+services:
+  app:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - db_data:/data
+      - uploads_data:/uploads
+      - logs_data:/logs
+      - config_data:/config
+      - browser_profiles:/browser_profiles
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/system/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    environment:
+      - VITE_API_BASE=/api
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:5173"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  kiosk:
+    build:
+      context: ./kiosk
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      - DISPLAY=${KIOSK_DISPLAY:-:0}
+      - KIOSK_URL=${KIOSK_URL:-http://app:8000/playback}
+      - ENABLE_REMOTE_DEBUGGING=${ENABLE_REMOTE_DEBUGGING:-false}
+    depends_on:
+      app:
+        condition: service_healthy
+    profiles:
+      - kiosk-container
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - browser_profiles:/home/kiosk/.config/chromium
+      - logs_data:/logs
+    restart: unless-stopped
+
+volumes:
+  db_data:
+  uploads_data:
+  logs_data:
+  config_data:
+  browser_profiles:
+    ports:
+      - "${ADMIN_PORT:-8080}:5173"
