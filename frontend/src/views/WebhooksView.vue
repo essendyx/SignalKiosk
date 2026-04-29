@@ -26,6 +26,8 @@ const legacyTokenConfigured = ref(false)
 const tokens = ref<WebhookToken[]>([])
 const newTokenName = ref("")
 const tokenMessage = ref("")
+const visibleToken = ref("")
+const visibleTokenName = ref("")
 const { locale, t } = useI18n()
 const initialFormSnapshot = ref("")
 
@@ -95,6 +97,28 @@ const copyToken = async (id: string): Promise<void> => {
   }
 }
 
+const showTokenSecret = async (id: string): Promise<void> => {
+  try {
+    const res = await api.get(`/webhook-config/tokens/${id}/secret`)
+    const payload = res.data as { token?: string; name?: string }
+    const token = String(payload.token || "")
+    if (!token) {
+      tokenMessage.value = locale.value === "de" ? "Token konnte nicht gelesen werden." : "Token could not be read."
+      return
+    }
+    visibleToken.value = token
+    visibleTokenName.value = String(payload.name || "Token")
+    tokenMessage.value = ""
+  } catch {
+    tokenMessage.value = locale.value === "de" ? "Token konnte nicht gelesen werden." : "Token could not be read."
+  }
+}
+
+const hideTokenSecret = (): void => {
+  visibleToken.value = ""
+  visibleTokenName.value = ""
+}
+
 const createToken = async (): Promise<void> => {
   const name = newTokenName.value.trim()
   if (!name) {
@@ -158,12 +182,23 @@ useUnsavedChangesGuard(isDirty, locale)
           <td>{{ item.name }}</td>
           <td><code>{{ item.token_preview }}</code></td>
           <td class="actions">
+            <button class="ghost" @click="showTokenSecret(item.id)">{{ locale === 'de' ? 'Anzeigen' : 'Show' }}</button>
             <button class="ghost" @click="copyToken(item.id)">{{ locale === 'de' ? 'Kopieren' : 'Copy' }}</button>
             <button class="danger" @click="removeToken(item.id)">{{ t('delete') }}</button>
           </td>
         </tr>
       </tbody>
     </table>
+
+    <div v-if="visibleToken" class="card form-grid wide">
+      <p class="hint full-width">{{ locale === 'de' ? 'Token (nur jetzt sichtbar):' : 'Token (visible now only):' }} <strong>{{ visibleTokenName }}</strong></p>
+      <label class="full-width">
+        <input :value="visibleToken" readonly />
+      </label>
+      <div class="toolbar">
+        <button class="ghost" type="button" @click="hideTokenSecret">{{ locale === 'de' ? 'Schliessen' : 'Close' }}</button>
+      </div>
+    </div>
 
     <div class="card webhook-help">
       <h3>{{ locale === 'de' ? 'Aufruf und Authentifizierung' : 'Call and authentication' }}</h3>
