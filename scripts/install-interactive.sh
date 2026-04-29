@@ -587,7 +587,7 @@ Environment=DISPLAY=:0
 Environment=XDG_RUNTIME_DIR=/run/user/${uid_value}
 Environment=XAUTHORITY=/home/${target_user}/.Xauthority
 ExecStartPre=
-ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do if [ -S /tmp/.X11-unix/X0 ] && [ -f /home/${target_user}/.Xauthority ]; then exit 0; fi; sleep 1; done; exit 0'
+ExecStartPre=/bin/sleep 10
 EOF
 
   mkdir -p /var/lib/signalkiosk/chrome-profile
