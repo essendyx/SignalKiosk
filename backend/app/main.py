@@ -130,6 +130,59 @@ def _get_playback_revision(db: Session) -> int:
         return 0
 
 
+def _seed_install_defaults(db: Session) -> None:
+    has_content = db.execute(select(Content.id).limit(1)).scalar_one_or_none() is not None
+    seeded_content: Content | None = None
+
+    if not has_content:
+        seeded_content = Content(
+            name="SignalKiosk GitHub",
+            type="webpage",
+            description="Standardinhalt nach Installation",
+            config_json=json.dumps({"url": "https://github.com/essendyx/SignalKiosk"}),
+            default_duration_seconds=20,
+            enabled=True,
+        )
+        db.add(seeded_content)
+        db.flush()
+
+    has_preset = db.execute(select(Preset.id).limit(1)).scalar_one_or_none() is not None
+    if has_preset:
+        if seeded_content:
+            _mark_playback_dirty(db)
+            db.commit()
+        return
+
+    if not seeded_content:
+        seeded_content = db.execute(select(Content).order_by(Content.created_at.asc()).limit(1)).scalars().first()
+    if not seeded_content:
+        return
+
+    preset = Preset(
+        name="Standard Preset",
+        description="Automatisch angelegt fuer den direkten Start",
+        enabled=True,
+        is_default=True,
+        loop_mode=True,
+        shuffle=False,
+        priority=0,
+    )
+    db.add(preset)
+    db.flush()
+    db.add(
+        PresetItem(
+            preset_id=preset.id,
+            content_id=seeded_content.id,
+            position=0,
+            duration_seconds=20,
+            play_until_end=False,
+            enabled=True,
+        )
+    )
+    _mark_playback_dirty(db)
+    db.commit()
+
+
 def _get_central_webhook_config(db: Session) -> dict[str, object]:
     raw = db.get(SystemSetting, "webhook.central_config")
     if not raw:
@@ -258,6 +311,7 @@ def startup() -> None:
         if not admin:
             db.add(User(username=settings.default_admin_username, password_hash=hash_password(settings.default_admin_password), role="admin"))
             db.commit()
+        _seed_install_defaults(db)
         ensure_playback_state(db)
     finally:
         db.close()
