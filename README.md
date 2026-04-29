@@ -56,7 +56,7 @@ It provides a web-based admin interface for content and scheduling, plus local C
 
 ## Recommended One-Path Install
 
-If you want one single, repeatable setup path (fresh Ubuntu + kiosk + autologin + fullscreen playback), follow only this section.
+If you want one single, repeatable setup path (fresh Ubuntu/Debian/Raspberry Pi OS + kiosk + autologin + fullscreen playback), follow only this section.
 You can ignore the other install sections.
 
 ### 1) Run the interactive installer (recommended)
@@ -243,7 +243,7 @@ npm install
 npm run dev
 ```
 
-Interactive installer (Ubuntu, guided):
+Interactive installer (Ubuntu/Debian/Raspberry Pi OS, guided):
 
 ```bash
 sudo bash scripts/install-interactive.sh

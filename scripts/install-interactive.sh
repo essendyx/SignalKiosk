@@ -12,6 +12,7 @@ DEFAULT_PLAYBACK_PORT="8081"
 DEFAULT_TZ="Europe/Berlin"
 DEFAULT_ADMIN_USER="admin"
 DEFAULT_ADMIN_PASS="admin"
+ALLOW_HEADLESS="false"
 
 log() { printf "\n[%s] %s\n" "$1" "$2"; }
 info() { printf "[INFO] %s\n" "$1"; }
@@ -41,11 +42,84 @@ ensure_root() {
   [[ "${EUID}" -eq 0 ]] || die "Please run as root: sudo bash scripts/install-interactive.sh"
 }
 
-ensure_ubuntu() {
+ensure_supported_os() {
   [[ -f /etc/os-release ]] || die "/etc/os-release not found"
   # shellcheck source=/dev/null
   . /etc/os-release
-  [[ "${ID:-}" == "ubuntu" ]] || die "This installer currently supports Ubuntu only"
+
+  case "${ID:-}" in
+    ubuntu|debian|raspbian)
+      return
+      ;;
+  esac
+
+  case "${ID_LIKE:-}" in
+    *debian*)
+      return
+      ;;
+  esac
+
+  die "Unsupported distribution: ${ID:-unknown}. Supported: Ubuntu, Debian, Raspberry Pi OS"
+}
+
+parse_args() {
+  while (( "$#" > 0 )); do
+    case "$1" in
+      --allow-headless)
+        ALLOW_HEADLESS="true"
+        ;;
+      -h|--help)
+        cat <<'EOF'
+Usage: sudo bash scripts/install-interactive.sh [options]
+
+Options:
+  --allow-headless   Skip display precheck (for CI/preprovisioning)
+  -h, --help         Show this help message
+EOF
+        exit 0
+        ;;
+      *)
+        die "Unknown option: $1"
+        ;;
+    esac
+    shift
+  done
+}
+
+has_connected_drm_display() {
+  local status_file
+  for status_file in /sys/class/drm/*/status; do
+    [[ -f "${status_file}" ]] || continue
+    if grep -qx "connected" "${status_file}"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+has_connected_xrandr_display() {
+  command -v xrandr >/dev/null 2>&1 || return 1
+  xrandr --query 2>/dev/null | grep -qE ' connected( primary)? '
+}
+
+check_display_or_exit() {
+  if [[ "${ALLOW_HEADLESS}" == "true" ]]; then
+    warn "Display precheck skipped via --allow-headless"
+    return
+  fi
+
+  log "PRECHECK" "Checking for an active display"
+  if has_connected_drm_display; then
+    info "Display precheck: connected (DRM)"
+    return
+  fi
+
+  if has_connected_xrandr_display; then
+    info "Display precheck: connected (xrandr)"
+    return
+  fi
+
+  die "No active display detected. Connect a display and rerun, or use --allow-headless for CI/preprovisioning."
 }
 
 prompt_default() {
@@ -178,7 +252,20 @@ EOF
 apply_xfce_power_settings() {
   local user="$1"
   log "POWER" "Applying XFCE power settings for kiosk user"
-  sudo -u "${user}" sh -lc 'if command -v xfconf-query >/dev/null 2>&1; then xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/power-button-action -n -t int -s 0; xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/sleep-button-action -n -t int -s 0; xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/hibernate-button-action -n -t int -s 0; xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/inactivity-on-ac -n -t int -s 14; xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/dpms-enabled -n -t bool -s false; fi'
+  local xfce_cmd='if command -v xfconf-query >/dev/null 2>&1; then xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/power-button-action -n -t int -s 0; xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/sleep-button-action -n -t int -s 0; xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/hibernate-button-action -n -t int -s 0; xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/inactivity-on-ac -n -t int -s 14; xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/dpms-enabled -n -t bool -s false; fi'
+
+  if sudo -u "${user}" sh -lc "${xfce_cmd}"; then
+    return
+  fi
+
+  if command -v dbus-run-session >/dev/null 2>&1; then
+    warn "Direct XFCE power configuration failed; retrying with dbus-run-session"
+    if sudo -u "${user}" dbus-run-session -- sh -lc "${xfce_cmd}"; then
+      return
+    fi
+  fi
+
+  warn "Unable to apply XFCE power settings now (likely no active desktop session/DBus). Continuing installation."
 }
 
 write_post_reboot_verify_script() {
@@ -295,8 +382,10 @@ ensure_user_exists() {
 }
 
 main() {
+  parse_args "$@"
   ensure_root
-  ensure_ubuntu
+  ensure_supported_os
+  check_display_or_exit
   require_cmd git
   require_cmd python3
   require_cmd curl

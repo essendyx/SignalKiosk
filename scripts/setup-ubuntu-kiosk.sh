@@ -6,23 +6,69 @@ if [[ "${EUID}" -ne 0 ]]; then
   exit 1
 fi
 
+if [[ ! -f /etc/os-release ]]; then
+  echo "Unsupported system: /etc/os-release not found"
+  exit 1
+fi
+
+# shellcheck source=/dev/null
+. /etc/os-release
+
+is_supported_os=false
+case "${ID:-}" in
+  ubuntu|debian|raspbian)
+    is_supported_os=true
+    ;;
+esac
+
+if [[ "${is_supported_os}" != "true" ]]; then
+  case "${ID_LIKE:-}" in
+    *debian*)
+      is_supported_os=true
+      ;;
+  esac
+fi
+
+if [[ "${is_supported_os}" != "true" ]]; then
+  echo "Unsupported distribution: ${ID:-unknown}. Supported: Ubuntu, Debian, Raspberry Pi OS"
+  exit 1
+fi
+
 PROJECT_DIR="/opt/SignalKiosk"
 SERVICE_FILE="/etc/systemd/system/signalkiosk-cdp-runner.service"
 CONTROL_SERVICE_FILE="/etc/systemd/system/signalkiosk-host-control.service"
 PROFILE_DIR="/var/lib/signalkiosk/chrome-profile"
 
+install_chromium() {
+  if apt-get install -y chromium-browser >/dev/null 2>&1; then
+    echo "/usr/bin/chromium-browser"
+    return
+  fi
+
+  apt-get install -y chromium >/dev/null 2>&1 || {
+    echo "Unable to install chromium-browser or chromium"
+    exit 1
+  }
+
+  if command -v chromium >/dev/null 2>&1; then
+    command -v chromium
+  elif command -v chromium-browser >/dev/null 2>&1; then
+    command -v chromium-browser
+  else
+    echo "Chromium binary not found after installation"
+    exit 1
+  fi
+}
+
 echo "[1/8] Installing host dependencies"
 apt-get update
-apt-get install -y ca-certificates curl gnupg lsb-release python3 python3-pip chromium-browser
+apt-get install -y ca-certificates curl gnupg python3 python3-pip
+CHROME_BIN_PATH="$(install_chromium)"
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "[2/8] Installing Docker Engine + Compose plugin"
-  install -m 0755 -d /etc/apt/keyrings
-  curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-  chmod a+r /etc/apt/keyrings/docker.asc
-  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list
-  apt-get update
-  apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  curl -fsSL https://get.docker.com | sh
+  apt-get install -y docker-compose-plugin
 else
   echo "[2/8] Docker already installed"
 fi
@@ -82,7 +128,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=${PROJECT_DIR}
 Environment=APP_BASE_URL=http://127.0.0.1:${PLAYBACK_PORT}
-Environment=CHROME_BIN=/usr/bin/chromium-browser
+Environment=CHROME_BIN=${CHROME_BIN_PATH}
 Environment=CDP_PORT=9222
 Environment=POLL_INTERVAL_SECONDS=1.5
 Environment=CHROME_HEADLESS=false
@@ -125,7 +171,12 @@ systemctl daemon-reload
 systemctl enable --now signalkiosk-host-control.service
 
 echo "[8/8] Done"
-echo "Admin UI: http://<server-ip>:${PLAYBACK_PORT}"
+ADMIN_PORT="$(grep '^ADMIN_PORT=' .env | cut -d '=' -f2 || true)"
+if [[ -z "${ADMIN_PORT}" ]]; then
+  ADMIN_PORT="8080"
+fi
+echo "Admin UI: http://<server-ip>:${ADMIN_PORT}"
+echo "Backend/API: http://<server-ip>:${PLAYBACK_PORT}"
 echo "Service status: systemctl status signalkiosk-cdp-runner.service"
 echo "Runner logs: journalctl -u signalkiosk-cdp-runner.service -f"
 echo "Host control status: systemctl status signalkiosk-host-control.service"
