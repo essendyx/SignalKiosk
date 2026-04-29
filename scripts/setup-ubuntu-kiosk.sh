@@ -29,8 +29,14 @@ fi
 
 echo "[3/8] Copying project to ${PROJECT_DIR}"
 mkdir -p "${PROJECT_DIR}"
-cp -a . "${PROJECT_DIR}"
-cd "${PROJECT_DIR}"
+CURRENT_DIR="$(pwd -P)"
+TARGET_DIR="$(cd "${PROJECT_DIR}" && pwd -P)"
+if [[ "${CURRENT_DIR}" != "${TARGET_DIR}" ]]; then
+  cp -a . "${PROJECT_DIR}"
+  cd "${PROJECT_DIR}"
+else
+  echo "[3/8] Project already in ${PROJECT_DIR}, skipping copy"
+fi
 
 echo "[4/8] Preparing environment"
 if [[ ! -f .env ]]; then
