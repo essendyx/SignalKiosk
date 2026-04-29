@@ -283,6 +283,23 @@ EOF
   chmod +x "${PROJECT_DIR}/scripts/post-reboot-verify.sh"
 }
 
+get_access_ips() {
+  local ips=""
+  if command -v hostname >/dev/null 2>&1; then
+    ips="$(hostname -I 2>/dev/null | xargs || true)"
+  fi
+
+  if [[ -z "${ips}" ]] && command -v ip >/dev/null 2>&1; then
+    ips="$(ip -4 -o addr show scope global | awk '{print $4}' | cut -d/ -f1 | xargs || true)"
+  fi
+
+  if [[ -z "${ips}" ]]; then
+    ips="127.0.0.1"
+  fi
+
+  printf "%s" "${ips}"
+}
+
 validate_fernet_key() {
   local key="$1"
   KEY_TO_CHECK="${key}" python3 - <<'PY'
@@ -559,8 +576,14 @@ EOF
   curl -fsS "http://127.0.0.1:${admin_port}" >/dev/null || warn "Admin UI not reachable yet"
 
   log "DONE" "Installation completed"
-  printf "Admin UI: http://<server-ip>:%s\n" "${admin_port}"
-  printf "Backend/API: http://<server-ip>:%s\n" "${playback_port}"
+  local detected_ips ip
+  detected_ips="$(get_access_ips)"
+  for ip in ${detected_ips}; do
+    printf "Admin UI: http://%s:%s\n" "${ip}" "${admin_port}"
+  done
+  for ip in ${detected_ips}; do
+    printf "Backend/API: http://%s:%s\n" "${ip}" "${playback_port}"
+  done
   printf "Post-reboot verify: sudo bash %s/scripts/post-reboot-verify.sh\n" "${PROJECT_DIR}"
   printf "Runner logs: journalctl -u signalkiosk-cdp-runner.service -f\n"
   printf "Host control logs: journalctl -u signalkiosk-host-control.service -f\n"

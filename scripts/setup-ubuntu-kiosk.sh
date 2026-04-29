@@ -64,6 +64,23 @@ install_chromium() {
   exit 1
 }
 
+get_access_ips() {
+  local ips=""
+  if command -v hostname >/dev/null 2>&1; then
+    ips="$(hostname -I 2>/dev/null | xargs || true)"
+  fi
+
+  if [[ -z "${ips}" ]] && command -v ip >/dev/null 2>&1; then
+    ips="$(ip -4 -o addr show scope global | awk '{print $4}' | cut -d/ -f1 | xargs || true)"
+  fi
+
+  if [[ -z "${ips}" ]]; then
+    ips="127.0.0.1"
+  fi
+
+  printf "%s" "${ips}"
+}
+
 echo "[1/8] Installing host dependencies"
 apt-get update
 apt-get install -y ca-certificates curl gnupg python3 python3-pip
@@ -179,8 +196,13 @@ ADMIN_PORT="$(grep '^ADMIN_PORT=' .env | cut -d '=' -f2 || true)"
 if [[ -z "${ADMIN_PORT}" ]]; then
   ADMIN_PORT="8080"
 fi
-echo "Admin UI: http://<server-ip>:${ADMIN_PORT}"
-echo "Backend/API: http://<server-ip>:${PLAYBACK_PORT}"
+DETECTED_IPS="$(get_access_ips)"
+for IP in ${DETECTED_IPS}; do
+  echo "Admin UI: http://${IP}:${ADMIN_PORT}"
+done
+for IP in ${DETECTED_IPS}; do
+  echo "Backend/API: http://${IP}:${PLAYBACK_PORT}"
+done
 echo "Service status: systemctl status signalkiosk-cdp-runner.service"
 echo "Runner logs: journalctl -u signalkiosk-cdp-runner.service -f"
 echo "Host control status: systemctl status signalkiosk-host-control.service"
