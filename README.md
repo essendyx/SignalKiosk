@@ -14,9 +14,12 @@ It provides a web-based admin interface for content and scheduling, plus local C
 - [Key Capabilities](#key-capabilities)
 - [Architecture](#architecture)
 - [Quick Start (Ubuntu 22.04/24.04)](#quick-start-ubuntu-22042404)
+- [Fresh Ubuntu End-to-End (Exact Steps)](#fresh-ubuntu-end-to-end-exact-steps)
 - [Fresh Ubuntu Kiosk Setup](#fresh-ubuntu-kiosk-setup)
+- [Kiosk Hardening](#kiosk-hardening)
 - [Configuration](#configuration)
 - [Operations](#operations)
+- [Uninstall](#uninstall)
 - [Backup and Restore](#backup-and-restore)
 - [Troubleshooting](#troubleshooting)
 - [Development](#development)
@@ -150,6 +153,110 @@ docker compose up -d
 docker compose --profile cdp-runner up -d cdp-runner
 ```
 
+## Fresh Ubuntu End-to-End (Exact Steps)
+
+Use this procedure on a blank Ubuntu 22.04/24.04 install.
+
+### 1) Create kiosk user with sudo rights
+
+Pick a username (example: `signalkiosk`) and create it:
+
+```bash
+sudo adduser signalkiosk
+sudo usermod -aG sudo signalkiosk
+```
+
+Optional but recommended for Docker CLI without sudo after login:
+
+```bash
+sudo usermod -aG docker signalkiosk
+```
+
+Switch to this user:
+
+```bash
+su - signalkiosk
+```
+
+### 2) Base system update
+
+```bash
+sudo apt update && sudo apt -y upgrade
+sudo apt -y install git
+```
+
+### 3) Clone repository (outside `/opt`)
+
+```bash
+cd ~
+git clone https://github.com/essendyx/SignalKiosk.git SignalKiosk-src
+cd SignalKiosk-src
+```
+
+### 4) Run kiosk installer
+
+```bash
+sudo bash scripts/setup-ubuntu-kiosk.sh
+```
+
+### 5) Configure environment
+
+The installer copies the project to `/opt/SignalKiosk` and creates `/opt/SignalKiosk/.env`.
+Edit that file (not the one in your home clone):
+
+```bash
+sudo nano /opt/SignalKiosk/.env
+```
+
+Apply changes:
+
+```bash
+cd /opt/SignalKiosk
+sudo docker compose up -d
+sudo systemctl restart signalkiosk-cdp-runner.service
+sudo systemctl restart signalkiosk-host-control.service
+```
+
+### 6) Install desktop and enable GUI boot
+
+```bash
+sudo apt update
+sudo apt -y install xfce4 xfce4-goodies lightdm
+sudo systemctl set-default graphical.target
+sudo systemctl enable lightdm
+```
+
+### 7) Enable automatic desktop login (required for visible playback)
+
+```bash
+sudo mkdir -p /etc/lightdm/lightdm.conf.d
+sudo bash -c 'cat >/etc/lightdm/lightdm.conf.d/50-signalkiosk-autologin.conf <<EOF
+[Seat:*]
+autologin-user=signalkiosk
+autologin-user-timeout=0
+user-session=xfce
+EOF'
+```
+
+If your username is not `signalkiosk`, replace `autologin-user=signalkiosk` accordingly.
+
+### 8) Reboot and verify
+
+```bash
+sudo reboot
+```
+
+After reboot (on local terminal in the GUI session):
+
+```bash
+echo $DISPLAY
+systemctl is-active signalkiosk-cdp-runner.service
+systemctl is-active signalkiosk-host-control.service
+journalctl -u signalkiosk-cdp-runner.service -n 80 --no-pager
+```
+
+`echo $DISPLAY` should typically be `:0` (sometimes `:1`).
+
 ## Fresh Ubuntu Kiosk Setup
 
 Use this on a clean Ubuntu host when you want backend/frontend in Docker but kiosk Chromium on the host.
@@ -210,6 +317,56 @@ journalctl -u signalkiosk-cdp-runner.service -n 80 --no-pager
 
 `echo $DISPLAY` should usually be `:0` (sometimes `:1`).
 
+## Kiosk Hardening
+
+Use this to prevent screen blanking, screensaver lock, and DPMS power-off on kiosk displays.
+
+### 1) Disable X11 screensaver and DPMS for each GUI login
+
+```bash
+sudo tee /etc/xdg/autostart/signalkiosk-display-power.desktop >/dev/null <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=SignalKiosk Display Power
+Exec=sh -c "xset s off -dpms s noblank"
+X-GNOME-Autostart-enabled=true
+NoDisplay=true
+EOF
+```
+
+### 2) Disable XFCE session lock/saver defaults
+
+```bash
+mkdir -p ~/.config/xfce4/xfconf/xfce-perchannel-xml
+cat > ~/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-screensaver.xml <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfce4-screensaver" version="1.0">
+  <property name="lock" type="bool" value="false"/>
+  <property name="idle-activation" type="bool" value="false"/>
+  <property name="mode" type="int" value="0"/>
+</channel>
+EOF
+```
+
+### 3) Apply now
+
+Log out and log in again (or reboot):
+
+```bash
+sudo reboot
+```
+
+Verify after GUI login:
+
+```bash
+xset q | grep -E "DPMS is|timeout:"
+```
+
+Expected indicators:
+
+- `DPMS is Disabled`
+- Screensaver timeout values show `0`
+
 Service operations:
 
 ```bash
@@ -230,6 +387,28 @@ docker compose logs -f app
 docker compose logs -f frontend
 docker compose --profile cdp-runner logs -f cdp-runner
 ```
+
+## Uninstall
+
+Run from any directory:
+
+```bash
+sudo bash /opt/SignalKiosk/scripts/uninstall.sh
+```
+
+Options:
+
+- Keep Docker and keep data (default): `sudo bash /opt/SignalKiosk/scripts/uninstall.sh`
+- Remove app data volumes too: `sudo bash /opt/SignalKiosk/scripts/uninstall.sh --remove-data`
+- Remove data + purge Docker packages: `sudo bash /opt/SignalKiosk/scripts/uninstall.sh --remove-data --purge-docker`
+
+The uninstall script removes:
+
+- `signalkiosk-cdp-runner.service` and `signalkiosk-host-control.service`
+- `/opt/SignalKiosk` project files
+- Host runner profile at `/var/lib/signalkiosk/chrome-profile`
+
+By default, Docker volumes are kept unless `--remove-data` is used.
 
 ## Backup and Restore
 
@@ -271,6 +450,7 @@ sudo bash scripts/import-full-snapshot.sh /opt/signal-backups/snapshot-20260429
 
 - Browser does not update: inspect `cdp-runner` logs and verify `app` is reachable
 - TV shows only text console/no browser: install desktop + display manager, enable autologin, and boot into `graphical.target`
+- Screen turns black after idle: apply steps in `Kiosk Hardening` to disable screensaver and DPMS
 - Restart buttons in Settings are disabled/failing: verify `HOST_CONTROL_TOKEN` in `.env` and host service `signalkiosk-host-control.service`
 - Browser stays on `about:blank`: check `http://127.0.0.1:8081/api/playback/command` returns `changed: true` on first call and valid `content_type`
 - Too many refreshes/navigations: inspect runner logs with timestamp; command updates now use revision + hash to avoid timer-only reloads
