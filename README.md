@@ -17,11 +17,6 @@ It provides a web-based admin interface for content and scheduling, plus local C
 - [Configuration](#configuration)
 - [Operations](#operations)
 - [Uninstall](#uninstall)
-- [Backup and Restore](#backup-and-restore)
-- [Troubleshooting](#troubleshooting)
-- [Development](#development)
-- [Releases](#releases)
-- [Local CDP Runner (Windows)](#local-cdp-runner-windows)
 - [Security Notes](#security-notes)
 - [License](#license)
 
