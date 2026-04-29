@@ -338,12 +338,15 @@ select_tag() {
   local repo_url="$1"
   local -a tags=()
   local line=""
+  local ref=""
   local tag=""
   local selection=""
 
   info "Fetching tags from ${repo_url}..." >&2
   while IFS= read -r line; do
-    tag="${line##refs/tags/}"
+    ref="$(printf "%s" "${line}" | awk '{print $2}')"
+    [[ -n "${ref}" ]] || continue
+    tag="${ref##refs/tags/}"
     tag="${tag%%^{}*}"
     [[ -n "${tag}" ]] && tags+=("${tag}")
   done < <(git ls-remote --tags --refs "${repo_url}")
@@ -384,6 +387,12 @@ select_tag() {
     done
     warn "Tag not found: ${selection}"
   done
+}
+
+tag_exists_remote() {
+  local repo_url="$1"
+  local tag="$2"
+  git ls-remote --exit-code --tags "${repo_url}" "refs/tags/${tag}" >/dev/null 2>&1
 }
 
 ensure_user_exists() {
@@ -432,6 +441,7 @@ main() {
     fi
 
     selected_tag="$(select_tag "${repo_url}")"
+    tag_exists_remote "${repo_url}" "${selected_tag}" || die "Selected tag does not exist on remote: ${selected_tag}"
     info "Selected tag: ${selected_tag}"
   fi
 
@@ -496,6 +506,7 @@ main() {
 
   if [[ "${install_mode}" == "release" ]]; then
     log "SOURCE" "Cloning selected release tag"
+    tag_exists_remote "${repo_url}" "${selected_tag}" || die "Selected tag no longer exists on remote: ${selected_tag}"
     TMP_DIR="$(mktemp -d -t signalkiosk-install-XXXXXX)"
     git clone --depth 1 --branch "${selected_tag}" "${repo_url}" "${TMP_DIR}/src"
     source_dir="${TMP_DIR}/src"
