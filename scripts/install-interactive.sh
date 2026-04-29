@@ -86,6 +86,13 @@ EOF
   done
 }
 
+read_env_value() {
+  local key="$1"
+  local file="$2"
+  [[ -f "${file}" ]] || return 1
+  grep -E "^${key}=" "${file}" | head -n1 | cut -d '=' -f2-
+}
+
 has_connected_drm_display() {
   local status_file
   for status_file in /sys/class/drm/*/status; do
@@ -457,10 +464,18 @@ main() {
   done
 
   local admin_port playback_port tz_value
+  local existing_env_file existing_admin_port existing_playback_port
+  existing_env_file="${PROJECT_DIR}/.env"
+  existing_admin_port="$(read_env_value "ADMIN_PORT" "${existing_env_file}" || true)"
+  existing_playback_port="$(read_env_value "PLAYBACK_PORT" "${existing_env_file}" || true)"
   while true; do
     admin_port="$(prompt_default "Admin port" "${DEFAULT_ADMIN_PORT}")"
     is_valid_port "${admin_port}" || { warn "Invalid admin port"; continue; }
     if port_in_use "${admin_port}"; then
+      if [[ -n "${existing_admin_port}" && "${admin_port}" == "${existing_admin_port}" ]]; then
+        info "Admin port ${admin_port} is in use by existing installation, reusing it"
+        break
+      fi
       warn "Admin port ${admin_port} is already in use"
       continue
     fi
@@ -475,6 +490,10 @@ main() {
       continue
     fi
     if port_in_use "${playback_port}"; then
+      if [[ -n "${existing_playback_port}" && "${playback_port}" == "${existing_playback_port}" ]]; then
+        info "Playback port ${playback_port} is in use by existing installation, reusing it"
+        break
+      fi
       warn "Playback port ${playback_port} is already in use"
       continue
     fi
