@@ -576,10 +576,6 @@ main() {
   uid_value="$(id -u "${target_user}")"
   mkdir -p /etc/systemd/system/signalkiosk-cdp-runner.service.d
   cat > /etc/systemd/system/signalkiosk-cdp-runner.service.d/10-user.conf <<EOF
-[Unit]
-After=lightdm.service graphical.target
-Wants=lightdm.service
-
 [Service]
 User=${target_user}
 Group=${target_user}

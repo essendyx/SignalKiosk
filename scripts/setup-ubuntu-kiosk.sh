@@ -142,7 +142,7 @@ mkdir -p "${PROFILE_DIR}"
 cat > "${SERVICE_FILE}" <<EOF
 [Unit]
 Description=SignalKiosk CDP Runner (Host Chrome via CDP)
-After=network-online.target docker.service lightdm.service graphical.target
+After=network-online.target docker.service lightdm.service
 Wants=network-online.target lightdm.service
 
 [Service]
@@ -160,7 +160,7 @@ Restart=always
 RestartSec=3
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=graphical.target
 EOF
 
 systemctl daemon-reload
