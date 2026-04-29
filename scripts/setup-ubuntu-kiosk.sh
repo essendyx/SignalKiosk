@@ -8,6 +8,7 @@ fi
 
 PROJECT_DIR="/opt/SignalKiosk"
 SERVICE_FILE="/etc/systemd/system/signalkiosk-cdp-runner.service"
+CONTROL_SERVICE_FILE="/etc/systemd/system/signalkiosk-host-control.service"
 PROFILE_DIR="/var/lib/signalkiosk/chrome-profile"
 
 echo "[1/8] Installing host dependencies"
@@ -40,6 +41,20 @@ PLAYBACK_PORT="$(grep '^PLAYBACK_PORT=' .env | cut -d '=' -f2 || true)"
 if [[ -z "${PLAYBACK_PORT}" ]]; then
   PLAYBACK_PORT="8090"
   echo "PLAYBACK_PORT=${PLAYBACK_PORT}" >> .env
+fi
+
+HOST_CONTROL_TOKEN="$(grep '^HOST_CONTROL_TOKEN=' .env | cut -d '=' -f2 || true)"
+if [[ -z "${HOST_CONTROL_TOKEN}" ]]; then
+  HOST_CONTROL_TOKEN="$(python3 - <<'PY'
+import secrets
+print(secrets.token_hex(32))
+PY
+)"
+  echo "HOST_CONTROL_TOKEN=${HOST_CONTROL_TOKEN}" >> .env
+fi
+
+if ! grep -q '^HOST_CONTROL_URL=' .env; then
+  echo "HOST_CONTROL_URL=http://127.0.0.1:9510" >> .env
 fi
 
 echo "[5/8] Starting Docker services (app + frontend)"
@@ -77,7 +92,34 @@ EOF
 systemctl daemon-reload
 systemctl enable --now signalkiosk-cdp-runner.service
 
+echo "[7b/8] Creating host control agent service"
+cat > "${CONTROL_SERVICE_FILE}" <<EOF
+[Unit]
+Description=SignalKiosk Host Control Agent
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=${PROJECT_DIR}
+Environment=PROJECT_DIR=${PROJECT_DIR}
+Environment=HOST_CONTROL_BIND=127.0.0.1
+Environment=HOST_CONTROL_PORT=9510
+Environment=HOST_CONTROL_TOKEN=${HOST_CONTROL_TOKEN}
+Environment=RUNNER_SERVICE_NAME=signalkiosk-cdp-runner.service
+ExecStart=/usr/bin/python3 ${PROJECT_DIR}/scripts/host-control-agent.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now signalkiosk-host-control.service
+
 echo "[8/8] Done"
 echo "Admin UI: http://<server-ip>:${PLAYBACK_PORT}"
 echo "Service status: systemctl status signalkiosk-cdp-runner.service"
 echo "Runner logs: journalctl -u signalkiosk-cdp-runner.service -f"
+echo "Host control status: systemctl status signalkiosk-host-control.service"

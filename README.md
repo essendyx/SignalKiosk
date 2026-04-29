@@ -30,6 +30,7 @@ It provides a web-based admin interface for content and scheduling, plus local C
 - Web admin UI for managing playback and system behavior
 - Dedicated CDP runner service that launches and controls Chromium
 - Playback is driven by structured commands (`/api/playback/command`), no iframe playback page
+- WebUI system controls to restart runner/backend/frontend from Settings
 - Containerized runtime with Docker Compose
 - FastAPI backend, Vue 3 + TypeScript frontend
 
@@ -47,6 +48,12 @@ It provides a web-based admin interface for content and scheduling, plus local C
 2. Backend exposes the current playback command via `GET /api/playback/command`.
 3. CDP runner polls the command endpoint and only navigates when command hash/revision changes.
 4. Runner controls local Chrome via CDP (`Page.navigate`) in kiosk/fullscreen mode.
+
+### Host control flow
+
+1. A host-local control agent (`scripts/host-control-agent.py`) runs as `systemd` service.
+2. Backend calls this agent on `HOST_CONTROL_URL` with `HOST_CONTROL_TOKEN`.
+3. Settings page can trigger: runner restart, backend restart, frontend restart, or app+frontend restart.
 
 ## Quick Start (Ubuntu 22.04/24.04)
 
@@ -116,6 +123,8 @@ Primary config file: `/opt/SignalKiosk/.env`
 | `CDP_PORT` | Internal Chrome DevTools port used by runner | `9222` |
 | `CHROME_HEADLESS` | Run browser headless in CDP runner | `false` |
 | `CHROME_ALLOW_INSECURE` | Relax browser security checks (unsafe) | `false` |
+| `HOST_CONTROL_URL` | Host control agent URL used by backend | `http://127.0.0.1:9510` |
+| `HOST_CONTROL_TOKEN` | Shared token between backend and host control agent | `` |
 
 For local Windows runner scripts, these parameters are relevant:
 
@@ -151,6 +160,7 @@ What the script does:
 - Starts `app` and `frontend` via Docker Compose
 - Installs `cdp_runner` Python dependencies on host
 - Creates and enables `signalkiosk-cdp-runner.service`
+- Creates and enables `signalkiosk-host-control.service`
 
 Service operations:
 
@@ -158,6 +168,8 @@ Service operations:
 sudo systemctl status signalkiosk-cdp-runner.service
 sudo systemctl restart signalkiosk-cdp-runner.service
 sudo journalctl -u signalkiosk-cdp-runner.service -f
+sudo systemctl status signalkiosk-host-control.service
+sudo journalctl -u signalkiosk-host-control.service -f
 ```
 
 ## Operations
@@ -190,6 +202,7 @@ docker compose up -d
 ## Troubleshooting
 
 - Browser does not update: inspect `cdp-runner` logs and verify `app` is reachable
+- Restart buttons in Settings are disabled/failing: verify `HOST_CONTROL_TOKEN` in `.env` and host service `signalkiosk-host-control.service`
 - Browser stays on `about:blank`: check `http://127.0.0.1:8081/api/playback/command` returns `changed: true` on first call and valid `content_type`
 - Too many refreshes/navigations: inspect runner logs with timestamp; command updates now use revision + hash to avoid timer-only reloads
 - API unreachable: inspect backend logs via `docker compose logs -f app`
@@ -231,6 +244,13 @@ Unified wrapper script (recommended):
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\local-cdp.ps1 start
+```
+
+All-in-one local dev wrapper (Docker + local CDP + local host-control):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\local-dev.ps1 up
+powershell -ExecutionPolicy Bypass -File .\scripts\local-dev.ps1 down
 ```
 
 Restart/stop via wrapper:
@@ -280,10 +300,40 @@ powershell -ExecutionPolicy Bypass -File .\scripts\local-cdp.ps1 restart
 Notes:
 
 - `start-local-cdp.ps1` starts `app` and `frontend` via Docker Compose and runs `cdp_runner/runner.py` locally.
+- In local Windows mode, `cdp-runner` container is intentionally stopped; Chrome is controlled by the host runner.
 - The local runner launches Chrome/Chromium on the host using CDP (`--remote-debugging-port`) in kiosk/fullscreen mode.
 - Translate prompts are suppressed by flags and runner-managed Chrome profile preferences.
 - Start script stops an already running local runner before launching a new one (prevents multi-window loops).
 - If your API runs on a different port than `8081`, set `-AppBaseUrl` accordingly.
+
+### Windows: enable Settings restart buttons
+
+The Settings restart buttons require the host control agent.
+
+1) Set in `.env`:
+
+```env
+HOST_CONTROL_URL=http://127.0.0.1:9510
+HOST_CONTROL_TOKEN=<your-random-token>
+```
+
+2) Rebuild/restart backend so it loads env:
+
+```powershell
+docker compose up -d --build app frontend
+```
+
+3) Start host control agent locally:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-host-control.ps1
+```
+
+4) Stop host control agent:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\stop-local-host-control.ps1
+```
 
 ## Security Notes
 

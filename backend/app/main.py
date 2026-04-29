@@ -6,6 +6,7 @@ import secrets
 import uuid
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
+import httpx
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -15,7 +16,7 @@ from .config import settings
 from .db import get_db
 from .deps import get_current_user
 from .models import AuditLog, AuthProfile, Content, OverrideEvent, PlaybackState, Preset, PresetItem, Schedule, SystemSetting, User
-from .schemas import AuthProfileIn, AuthProfileOut, ContentIn, ContentListOut, ContentOut, LoginIn, PresetIn, PresetItemIn, PresetItemOut, PresetOut, ScheduleIn, ScheduleOut, SystemSettingIn, SystemSettingOut, TokenOut, WebhookConfigIn, WebhookTokenIn, WebhookTriggerIn
+from .schemas import AuthProfileIn, AuthProfileOut, ConfigImportIn, ContentIn, ContentListOut, ContentOut, LoginIn, PresetIn, PresetItemIn, PresetItemOut, PresetOut, ScheduleIn, ScheduleOut, SystemSettingIn, SystemSettingOut, TokenOut, WebhookConfigIn, WebhookTokenIn, WebhookTriggerIn
 from .security import create_access_token, decrypt_secret, encrypt_secret, hash_password, hash_token, verify_password
 from .services import advance_rotation, ensure_playback_state
 
@@ -663,6 +664,242 @@ def put_setting(key: str, payload: SystemSettingIn, db: Session = Depends(get_db
     return SystemSettingOut(key=obj.key, value=json.loads(obj.value_json), updated_at=obj.updated_at)
 
 
+@app.get("/api/system/config/export")
+def export_system_config(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+    sections: str | None = Query(default=None),
+):
+    allowed = {"settings", "contents", "presets", "preset_items", "schedules", "auth_profiles", "users"}
+    selected = [item.strip() for item in (sections or "").split(",") if item.strip()]
+    if not selected:
+        selected = sorted(allowed)
+    selected = [item for item in selected if item in allowed]
+
+    out: dict[str, object] = {}
+    if "settings" in selected:
+        rows = db.execute(select(SystemSetting).order_by(SystemSetting.key.asc())).scalars().all()
+        data: dict[str, object] = {}
+        for row in rows:
+            try:
+                parsed = json.loads(row.value_json)
+            except Exception:
+                parsed = {"value": row.value_json}
+            data[row.key] = parsed
+        out["settings"] = data
+
+    if "contents" in selected:
+        rows = db.execute(select(Content).order_by(Content.created_at.asc())).scalars().all()
+        out["contents"] = [
+            {
+                "id": row.id,
+                "name": row.name,
+                "type": row.type,
+                "description": row.description,
+                "enabled": row.enabled,
+                "config_json": row.config_json,
+                "default_duration_seconds": row.default_duration_seconds,
+                "fallback_content_id": row.fallback_content_id,
+            }
+            for row in rows
+        ]
+
+    if "presets" in selected:
+        rows = db.execute(select(Preset).order_by(Preset.created_at.asc())).scalars().all()
+        out["presets"] = [
+            {
+                "id": row.id,
+                "name": row.name,
+                "description": row.description,
+                "enabled": row.enabled,
+                "is_default": row.is_default,
+                "loop_mode": row.loop_mode,
+                "shuffle": row.shuffle,
+                "priority": row.priority,
+            }
+            for row in rows
+        ]
+
+    if "preset_items" in selected:
+        rows = db.execute(select(PresetItem).order_by(PresetItem.preset_id.asc(), PresetItem.position.asc())).scalars().all()
+        out["preset_items"] = [
+            {
+                "id": row.id,
+                "preset_id": row.preset_id,
+                "content_id": row.content_id,
+                "position": row.position,
+                "duration_seconds": row.duration_seconds,
+                "play_until_end": row.play_until_end,
+                "enabled": row.enabled,
+                "transition": row.transition,
+            }
+            for row in rows
+        ]
+
+    if "schedules" in selected:
+        rows = db.execute(select(Schedule).order_by(Schedule.created_at.asc())).scalars().all()
+        out["schedules"] = [
+            {
+                "id": row.id,
+                "name": row.name,
+                "preset_id": row.preset_id,
+                "enabled": row.enabled,
+                "weekdays": row.weekdays,
+                "start_time": row.start_time,
+                "end_time": row.end_time,
+                "start_date": row.start_date,
+                "end_date": row.end_date,
+                "timezone": row.timezone,
+                "priority": row.priority,
+            }
+            for row in rows
+        ]
+
+    if "auth_profiles" in selected:
+        rows = db.execute(select(AuthProfile).order_by(AuthProfile.created_at.asc())).scalars().all()
+        out["auth_profiles"] = [
+            {
+                "id": row.id,
+                "name": row.name,
+                "type": row.type,
+                "encrypted_config_json": row.encrypted_config_json,
+            }
+            for row in rows
+        ]
+
+    if "users" in selected:
+        rows = db.execute(select(User).order_by(User.created_at.asc())).scalars().all()
+        out["users"] = [
+            {
+                "id": row.id,
+                "username": row.username,
+                "password_hash": row.password_hash,
+                "role": row.role,
+                "enabled": row.enabled,
+            }
+            for row in rows
+        ]
+
+    return {
+        "version": 1,
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "selected_sections": selected,
+        "sections": out,
+    }
+
+
+@app.post("/api/system/config/import")
+def import_system_config(payload: ConfigImportIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    allowed = {"settings", "contents", "presets", "preset_items", "schedules", "auth_profiles", "users"}
+    selected = payload.selected_sections or sorted(allowed)
+    selected = [item for item in selected if item in allowed]
+    sections = payload.sections if isinstance(payload.sections, dict) else {}
+    imported = 0
+    skipped = 0
+
+    if "settings" in selected and isinstance(sections.get("settings"), dict):
+        for key, value in dict(sections.get("settings") or {}).items():
+            key_clean = str(key).strip()
+            if not key_clean:
+                continue
+            existing = db.get(SystemSetting, key_clean)
+            if existing and not payload.replace_existing:
+                skipped += 1
+                continue
+            raw_value = value if isinstance(value, dict) else {"value": value}
+            if existing:
+                existing.value_json = json.dumps(raw_value)
+                db.add(existing)
+            else:
+                db.add(SystemSetting(key=key_clean, value_json=json.dumps(raw_value)))
+            imported += 1
+
+    def upsert_by_id(rows: object, model_cls, apply):
+        nonlocal imported, skipped
+        if not isinstance(rows, list):
+            return
+        for item in rows:
+            if not isinstance(item, dict):
+                continue
+            row_id = str(item.get("id", "")).strip()
+            if not row_id:
+                continue
+            existing = db.get(model_cls, row_id)
+            if existing and not payload.replace_existing:
+                skipped += 1
+                continue
+            target = existing if existing else model_cls(id=row_id)
+            apply(target, item)
+            db.add(target)
+            imported += 1
+
+    if "contents" in selected:
+        upsert_by_id(sections.get("contents"), Content, lambda t, i: (
+            setattr(t, "name", str(i.get("name", ""))),
+            setattr(t, "type", str(i.get("type", "webpage"))),
+            setattr(t, "description", i.get("description")),
+            setattr(t, "enabled", bool(i.get("enabled", True))),
+            setattr(t, "config_json", str(i.get("config_json", "{}"))),
+            setattr(t, "default_duration_seconds", int(i.get("default_duration_seconds", 15))),
+            setattr(t, "fallback_content_id", i.get("fallback_content_id")),
+        ))
+
+    if "presets" in selected:
+        upsert_by_id(sections.get("presets"), Preset, lambda t, i: (
+            setattr(t, "name", str(i.get("name", ""))),
+            setattr(t, "description", i.get("description")),
+            setattr(t, "enabled", bool(i.get("enabled", True))),
+            setattr(t, "is_default", bool(i.get("is_default", False))),
+            setattr(t, "loop_mode", bool(i.get("loop_mode", True))),
+            setattr(t, "shuffle", bool(i.get("shuffle", False))),
+            setattr(t, "priority", int(i.get("priority", 0))),
+        ))
+
+    if "preset_items" in selected:
+        upsert_by_id(sections.get("preset_items"), PresetItem, lambda t, i: (
+            setattr(t, "preset_id", str(i.get("preset_id", ""))),
+            setattr(t, "content_id", str(i.get("content_id", ""))),
+            setattr(t, "position", int(i.get("position", 0))),
+            setattr(t, "duration_seconds", i.get("duration_seconds")),
+            setattr(t, "play_until_end", bool(i.get("play_until_end", False))),
+            setattr(t, "enabled", bool(i.get("enabled", True))),
+            setattr(t, "transition", i.get("transition")),
+        ))
+
+    if "schedules" in selected:
+        upsert_by_id(sections.get("schedules"), Schedule, lambda t, i: (
+            setattr(t, "name", str(i.get("name", ""))),
+            setattr(t, "preset_id", str(i.get("preset_id", ""))),
+            setattr(t, "enabled", bool(i.get("enabled", True))),
+            setattr(t, "weekdays", str(i.get("weekdays", "0,1,2,3,4,5,6"))),
+            setattr(t, "start_time", str(i.get("start_time", "00:00"))),
+            setattr(t, "end_time", str(i.get("end_time", "23:59"))),
+            setattr(t, "start_date", i.get("start_date")),
+            setattr(t, "end_date", i.get("end_date")),
+            setattr(t, "timezone", str(i.get("timezone", "UTC"))),
+            setattr(t, "priority", int(i.get("priority", 0))),
+        ))
+
+    if "auth_profiles" in selected:
+        upsert_by_id(sections.get("auth_profiles"), AuthProfile, lambda t, i: (
+            setattr(t, "name", str(i.get("name", ""))),
+            setattr(t, "type", str(i.get("type", ""))),
+            setattr(t, "encrypted_config_json", str(i.get("encrypted_config_json", "{}"))),
+        ))
+
+    if "users" in selected:
+        upsert_by_id(sections.get("users"), User, lambda t, i: (
+            setattr(t, "username", str(i.get("username", ""))),
+            setattr(t, "password_hash", str(i.get("password_hash", ""))),
+            setattr(t, "role", str(i.get("role", "admin"))),
+            setattr(t, "enabled", bool(i.get("enabled", True))),
+        ))
+
+    db.add(AuditLog(actor_type="user", actor_id=user.id, action="import", entity_type="config", entity_id="bulk", metadata_json=json.dumps({"imported": imported, "skipped": skipped, "selected_sections": selected})))
+    db.commit()
+    return {"status": "ok", "imported": imported, "skipped": skipped, "selected_sections": selected}
+
+
 @app.post("/webhook")
 def webhook(
     payload: WebhookTriggerIn,
@@ -833,3 +1070,65 @@ def playback_command(
 def health(db: Session = Depends(get_db)):
     db.execute(select(User).limit(1)).all()
     return {"status": "ok", "time": datetime.now(timezone.utc)}
+
+
+def _host_control_request(action: str) -> dict[str, object]:
+    token = str(settings.host_control_token or "").strip()
+    if not token:
+        raise HTTPException(status_code=503, detail="Host control token not configured")
+    base_url = str(settings.host_control_url or "http://127.0.0.1:9510").rstrip("/")
+    url = f"{base_url}/control/{action}"
+    headers = {"X-SignalKiosk-Control-Token": token}
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            res = client.post(url, headers=headers)
+        if res.status_code >= 400:
+            raise HTTPException(status_code=res.status_code, detail=f"Host control rejected action '{action}'")
+        data = res.json()
+        if not isinstance(data, dict):
+            return {"status": "ok", "action": action}
+        return data
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Host control unavailable: {exc}") from exc
+
+
+@app.get("/api/system/control/status")
+def system_control_status(_: User = Depends(get_current_user)):
+    token = str(settings.host_control_token or "").strip()
+    if not token:
+        return {"enabled": False, "detail": "Host control token not configured"}
+    base_url = str(settings.host_control_url or "http://127.0.0.1:9510").rstrip("/")
+    headers = {"X-SignalKiosk-Control-Token": token}
+    try:
+        with httpx.Client(timeout=5.0) as client:
+            res = client.get(f"{base_url}/control/status", headers=headers)
+        if res.status_code >= 400:
+            return {"enabled": False, "detail": f"Host control returned {res.status_code}"}
+        payload = res.json()
+        if not isinstance(payload, dict):
+            payload = {"status": "ok"}
+        return {"enabled": True, **payload}
+    except Exception as exc:
+        return {"enabled": False, "detail": str(exc)}
+
+
+@app.post("/api/system/control/restart-runner")
+def restart_runner(_: User = Depends(get_current_user)):
+    return _host_control_request("runner/restart")
+
+
+@app.post("/api/system/control/restart-app")
+def restart_app(_: User = Depends(get_current_user)):
+    return _host_control_request("docker/restart-app")
+
+
+@app.post("/api/system/control/restart-frontend")
+def restart_frontend(_: User = Depends(get_current_user)):
+    return _host_control_request("docker/restart-frontend")
+
+
+@app.post("/api/system/control/restart-all")
+def restart_all(_: User = Depends(get_current_user)):
+    return _host_control_request("docker/restart-all")

@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     default_admin_username: str = "admin"
     default_admin_password: str = "admin123!"
     playback_debug_mode: bool = False
+    host_control_url: str = "http://127.0.0.1:9510"
+    host_control_token: str = ""
 
     @property
     def cors_origins(self) -> list[str]:

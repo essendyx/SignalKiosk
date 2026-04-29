@@ -146,3 +146,9 @@ class SystemSettingOut(BaseModel):
     key: str
     value: dict[str, str | int | bool | float | None]
     updated_at: datetime
+
+
+class ConfigImportIn(BaseModel):
+    sections: dict[str, object]
+    selected_sections: list[str] | None = None
+    replace_existing: bool = False
