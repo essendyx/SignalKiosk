@@ -191,12 +191,32 @@ docker compose --profile cdp-runner logs -f cdp-runner
 docker run --rm -v signalkiosk_db_data:/from -v $(pwd):/to alpine sh -c "cd /from && tar czf /to/signalkiosk-db-backup.tgz ."
 ```
 
+### Full snapshot (recommended for image/video content)
+
+This exports database + uploads + config volumes, so `asset_path` references remain valid after restore.
+
+```bash
+bash scripts/export-full-snapshot.sh
+```
+
+Optional output directory:
+
+```bash
+bash scripts/export-full-snapshot.sh /opt/signal-backups/snapshot-20260429
+```
+
 ### Restore
 
 ```bash
 docker compose down
 docker run --rm -v signalkiosk_db_data:/to -v $(pwd):/from alpine sh -c "cd /to && tar xzf /from/signalkiosk-db-backup.tgz"
 docker compose up -d
+```
+
+### Full snapshot restore
+
+```bash
+sudo bash scripts/import-full-snapshot.sh /opt/signal-backups/snapshot-20260429
 ```
 
 ## Troubleshooting
