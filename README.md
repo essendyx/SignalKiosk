@@ -170,6 +170,46 @@ What the script does:
 - Creates and enables `signalkiosk-cdp-runner.service`
 - Creates and enables `signalkiosk-host-control.service`
 
+### Required for visible playback on TV/monitor
+
+Host-mode playback needs a running Linux desktop session (X11). If the machine only boots to a text console (TTY), Chromium cannot open a visible kiosk window.
+
+Install a lightweight desktop + display manager:
+
+```bash
+sudo apt update
+sudo apt -y install xfce4 xfce4-goodies lightdm
+sudo systemctl set-default graphical.target
+sudo systemctl enable lightdm
+```
+
+Enable automatic login for kiosk user (example: `signalkiosk`):
+
+```bash
+sudo bash -c 'cat >/etc/lightdm/lightdm.conf.d/50-signalkiosk-autologin.conf <<EOF
+[Seat:*]
+autologin-user=signalkiosk
+autologin-user-timeout=0
+user-session=xfce
+EOF'
+```
+
+Then reboot:
+
+```bash
+sudo reboot
+```
+
+After reboot, verify a GUI session is active and restart the runner once:
+
+```bash
+echo $DISPLAY
+sudo systemctl restart signalkiosk-cdp-runner.service
+journalctl -u signalkiosk-cdp-runner.service -n 80 --no-pager
+```
+
+`echo $DISPLAY` should usually be `:0` (sometimes `:1`).
+
 Service operations:
 
 ```bash
@@ -230,6 +270,7 @@ sudo bash scripts/import-full-snapshot.sh /opt/signal-backups/snapshot-20260429
 ## Troubleshooting
 
 - Browser does not update: inspect `cdp-runner` logs and verify `app` is reachable
+- TV shows only text console/no browser: install desktop + display manager, enable autologin, and boot into `graphical.target`
 - Restart buttons in Settings are disabled/failing: verify `HOST_CONTROL_TOKEN` in `.env` and host service `signalkiosk-host-control.service`
 - Browser stays on `about:blank`: check `http://127.0.0.1:8081/api/playback/command` returns `changed: true` on first call and valid `content_type`
 - Too many refreshes/navigations: inspect runner logs with timestamp; command updates now use revision + hash to avoid timer-only reloads
