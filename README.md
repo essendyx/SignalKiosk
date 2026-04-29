@@ -81,6 +81,17 @@ sudo bash scripts/setup-ubuntu-kiosk.sh
 
 ### 3) Edit active config
 
+Generate a valid Fernet key for `SECRET_ENCRYPTION_KEY`:
+
+```bash
+python3 - <<'PY'
+from cryptography.fernet import Fernet
+print(Fernet.generate_key().decode())
+PY
+```
+
+Copy the output and set it in `/opt/SignalKiosk/.env` as `SECRET_ENCRYPTION_KEY=<generated-key>`.
+
 ```bash
 sudo nano /opt/SignalKiosk/.env
 cd /opt/SignalKiosk
@@ -132,6 +143,45 @@ journalctl -u signalkiosk-cdp-runner.service -n 50 --no-pager
 ```
 
 Open admin UI: `http://<server-ip>:8080` (or your `ADMIN_PORT`).
+Do not use a fixed `/playback` URL for kiosk output; the runner navigates dynamically from `GET /api/playback/command`.
+
+### 7) Ensure runner uses logged-in desktop user (important)
+
+Set the runner service to the kiosk user and the correct runtime dir:
+
+```bash
+id -u signalkiosk
+sudo systemctl edit signalkiosk-cdp-runner.service
+```
+
+Insert:
+
+```ini
+[Service]
+User=signalkiosk
+Group=signalkiosk
+Environment=DISPLAY=:0
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=XAUTHORITY=/home/signalkiosk/.Xauthority
+ExecStart=
+ExecStart=/usr/bin/python3 /opt/SignalKiosk/cdp_runner/runner.py
+```
+
+Replace `1000` with the UID from `id -u signalkiosk` if different. Then apply:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart signalkiosk-cdp-runner.service
+```
+
+Fix Chrome profile permissions for that user:
+
+```bash
+sudo mkdir -p /var/lib/signalkiosk/chrome-profile
+sudo chown -R signalkiosk:signalkiosk /var/lib/signalkiosk
+sudo chmod -R u+rwX /var/lib/signalkiosk
+sudo systemctl restart signalkiosk-cdp-runner.service
+```
 
 ## Configuration
 
@@ -142,7 +192,7 @@ Minimal `.env` for this setup:
 ```dotenv
 APP_ENV=production
 APP_SECRET_KEY=change-me-to-a-long-random-secret
-SECRET_ENCRYPTION_KEY=
+SECRET_ENCRYPTION_KEY=<generated-fernet-key>
 ADMIN_PORT=8080
 PLAYBACK_PORT=8081
 DATABASE_URL=sqlite:////data/localkiosk.db
@@ -160,6 +210,8 @@ cd /opt/SignalKiosk
 sudo docker compose up -d
 sudo systemctl restart signalkiosk-cdp-runner.service signalkiosk-host-control.service
 ```
+
+If `SECRET_ENCRYPTION_KEY` is invalid, backend startup fails with: `Fernet key must be 32 url-safe base64-encoded bytes`.
 
 Service operations:
 
@@ -245,6 +297,10 @@ sudo bash scripts/import-full-snapshot.sh /opt/signal-backups/snapshot-20260429
 - Browser does not update: inspect `cdp-runner` logs and verify `app` is reachable
 - TV shows only text console/no browser: install desktop + display manager, enable autologin, and boot into `graphical.target`
 - Screen turns black after idle: repeat step `5) Kiosk hardening (no blank screen)` from `Recommended One-Path Install`
+- Manual browser test opens UI but not kiosk content: this is expected; `:8080` is admin UI and runner navigates dynamically from `GET /api/playback/command`
+- Browser shows `{"detail":"Not Found"}` on `/playback` via `:8081`: expected, because `:8081` is backend API only
+- `cdp-runner` logs show `Permission denied ... /var/lib/signalkiosk/chrome-profile/First Run`: fix owner/permissions with the commands in step `7`
+- `cdp-runner` logs show repeated `CDP page target not available`: usually no active GUI session or service running as wrong user; apply step `7` and verify autologin/desktop session
 - Restart buttons in Settings are disabled/failing: verify `HOST_CONTROL_TOKEN` in `.env` and host service `signalkiosk-host-control.service`
 - Browser stays on `about:blank`: check `http://127.0.0.1:8081/api/playback/command` returns `changed: true` on first call and valid `content_type`
 - Too many refreshes/navigations: inspect runner logs with timestamp; command updates now use revision + hash to avoid timer-only reloads
