@@ -2,26 +2,20 @@ import json
 import html
 import os
 import re
+import secrets
 import uuid
 from pathlib import Path
-from urllib.parse import quote, urljoin, urlsplit
-import re
 from datetime import datetime, timezone, timedelta
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
-import httpx
-
-CURRENT_PROXY_ORIGIN: str | None = None
-CURRENT_PROXY_BASE_PATH: str = "/"
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from .config import settings
 from .db import get_db
 from .deps import get_current_user
-from .models import AuditLog, AuthProfile, Content, OverrideEvent, Preset, PresetItem, Schedule, SystemSetting, User, WebhookEndpoint
-from .schemas import AuthProfileIn, AuthProfileOut, ContentIn, ContentListOut, ContentOut, LoginIn, PresetIn, PresetItemIn, PresetItemOut, PresetOut, ScheduleIn, ScheduleOut, SystemSettingIn, SystemSettingOut, TokenOut, WebhookIn, WebhookTriggerIn
+from .models import AuditLog, AuthProfile, Content, OverrideEvent, PlaybackState, Preset, PresetItem, Schedule, SystemSetting, User
+from .schemas import AuthProfileIn, AuthProfileOut, ContentIn, ContentListOut, ContentOut, LoginIn, PresetIn, PresetItemIn, PresetItemOut, PresetOut, ScheduleIn, ScheduleOut, SystemSettingIn, SystemSettingOut, TokenOut, WebhookConfigIn, WebhookTokenIn, WebhookTriggerIn
 from .security import create_access_token, decrypt_secret, encrypt_secret, hash_password, hash_token, verify_password
 from .services import advance_rotation, ensure_playback_state
 
@@ -66,10 +60,7 @@ def _normalize_content_payload(payload: ContentIn) -> ContentIn:
         url = str(cfg.get("url", "")).strip()
         if not url:
             raise HTTPException(status_code=400, detail="Webseite benoetigt eine URL")
-        mode = str(cfg.get("webpage_mode", "embedded")).strip().lower()
-        if mode not in {"embedded", "direct"}:
-            mode = "embedded"
-        cfg = {"url": url, "webpage_mode": mode}
+        cfg = {"url": url}
     elif payload.type == "html":
         html = str(cfg.get("html", "")).strip()
         if not html:
@@ -127,94 +118,117 @@ def _mark_playback_dirty(db: Session) -> None:
     db.add(rev)
 
 
-def _url_is_probably_frame_blocked(url: str) -> bool:
+def _get_playback_revision(db: Session) -> int:
+    rev = db.get(SystemSetting, "playback.revision")
+    if not rev:
+        return 0
     try:
-        with httpx.Client(follow_redirects=True, timeout=5.0) as client:
-            response = client.get(url)
-        xfo = response.headers.get("x-frame-options", "").lower()
-        if "deny" in xfo or "sameorigin" in xfo:
-            return True
-        csp = response.headers.get("content-security-policy", "").lower()
-        if "frame-ancestors" in csp and "*" not in csp:
-            if "'self'" in csp or "'none'" in csp:
-                return True
+        return int(json.loads(rev.value_json).get("value", 0))
     except Exception:
-        return False
-    return False
+        return 0
 
 
-def _to_site_proxy_path(absolute_url: str) -> str:
-    if not CURRENT_PROXY_ORIGIN:
-        return "/"
-    parsed = urlsplit(absolute_url)
-    base = urlsplit(CURRENT_PROXY_ORIGIN)
-    if parsed.scheme != base.scheme or parsed.netloc != base.netloc:
-        return "/playback/proxy-asset?target=" + quote(absolute_url, safe="")
-    suffix = parsed.path or "/"
-    if parsed.query:
-        suffix = f"{suffix}?{parsed.query}"
-    return f"/playback/site{suffix}"
+def _get_central_webhook_config(db: Session) -> dict[str, object]:
+    raw = db.get(SystemSetting, "webhook.central_config")
+    if not raw:
+        return {"enabled": True, "token_hash": ""}
+    try:
+        value = json.loads(raw.value_json)
+    except Exception:
+        value = {}
+    if not isinstance(value, dict):
+        value = {}
+    tokens_raw = value.get("tokens", [])
+    tokens: list[dict[str, str]] = []
+    if isinstance(tokens_raw, list):
+        for item in tokens_raw:
+            if not isinstance(item, dict):
+                continue
+            token_id = str(item.get("id", "")).strip()
+            token_hash_value = str(item.get("token_hash", "")).strip()
+            token_encrypted = str(item.get("token_encrypted", "")).strip()
+            if not token_id or not token_hash_value or not token_encrypted:
+                continue
+            tokens.append(
+                {
+                    "id": token_id,
+                    "name": str(item.get("name", "Token")).strip() or "Token",
+                    "token_hash": token_hash_value,
+                    "token_encrypted": token_encrypted,
+                }
+            )
+    legacy_hash = str(value.get("token_hash", "")).strip()
+    return {
+        "enabled": bool(value.get("enabled", True)),
+        "tokens": tokens,
+        "legacy_token_hash": legacy_hash,
+    }
 
 
-def _rewrite_html_for_proxy(html_text: str, base_url: str) -> str:
-    attr_pattern = re.compile(r"(src|href)=['\"]([^'\"]+)['\"]", re.IGNORECASE)
-
-    def repl(match: re.Match[str]) -> str:
-        attr = match.group(1)
-        value = match.group(2)
-        if value.startswith(("data:", "javascript:", "mailto:", "#")):
-            return match.group(0)
-        absolute = urljoin(base_url, value)
-        proxied = _to_site_proxy_path(absolute)
-        return f'{attr}="{proxied}"'
-
-    rewritten = attr_pattern.sub(repl, html_text)
-    rewritten = rewritten.replace('"/socket.io', '"/playback/site/socket.io')
-    rewritten = rewritten.replace("'/socket.io", "'/playback/site/socket.io")
-    return rewritten
+def _put_central_webhook_config(db: Session, enabled: bool, tokens: list[dict[str, str]], legacy_token_hash: str = "") -> None:
+    raw = db.get(SystemSetting, "webhook.central_config")
+    payload = {"enabled": enabled, "tokens": tokens, "token_hash": legacy_token_hash}
+    if not raw:
+        raw = SystemSetting(key="webhook.central_config", value_json=json.dumps(payload))
+    else:
+        raw.value_json = json.dumps(payload)
+    db.add(raw)
 
 
-def _set_proxy_origin(target_url: str) -> None:
-    global CURRENT_PROXY_ORIGIN, CURRENT_PROXY_BASE_PATH
-    parts = urlsplit(target_url)
-    if parts.scheme and parts.netloc:
-        CURRENT_PROXY_ORIGIN = f"{parts.scheme}://{parts.netloc}"
-        CURRENT_PROXY_BASE_PATH = parts.path or "/"
+def _normalize_webhook_trigger_payload(payload: WebhookTriggerIn) -> dict[str, object]:
+    content_type = str(payload.content_type or "").strip().lower()
+    apply_mode = str(payload.apply_mode or "replace_now").strip().lower()
+    if content_type not in {"webpage", "html", "image", "video"}:
+        raise HTTPException(status_code=400, detail="content_type muss webpage, html, image oder video sein")
+    if apply_mode not in {"replace_now", "queue_next_once"}:
+        raise HTTPException(status_code=400, detail="apply_mode muss replace_now oder queue_next_once sein")
+
+    data: dict[str, object] = {
+        "content_type": content_type,
+        "duration_seconds": payload.duration_seconds,
+        "apply_mode": apply_mode,
+        "priority": payload.priority,
+    }
+
+    if content_type == "webpage":
+        url = str(payload.url or "").strip()
+        if not url:
+            raise HTTPException(status_code=400, detail="webpage benoetigt url")
+        data["url"] = url
+    elif content_type == "html":
+        html_snippet = str(payload.html or "").strip()
+        if not html_snippet:
+            raise HTTPException(status_code=400, detail="html darf nicht leer sein")
+        data["html"] = html_snippet
+    else:
+        url = str(payload.url or "").strip()
+        asset_path = str(payload.asset_path or "").strip()
+        if not url and not asset_path:
+            raise HTTPException(status_code=400, detail="image/video benoetigt url oder asset_path")
+        if url:
+            data["url"] = url
+        if asset_path:
+            data["asset_path"] = asset_path
+
+    return data
 
 
-async def _proxy_to_current_origin(path: str, request: Request) -> Response:
-    if not CURRENT_PROXY_ORIGIN:
-        raise HTTPException(status_code=404, detail="No active playback proxy target")
+def _activate_override_event_now(db: Session, event: OverrideEvent, now: datetime) -> PlaybackState:
+    state = ensure_playback_state(db)
+    payload = json.loads(event.payload_json)
+    payload["reason"] = "central webhook override"
+    state.active_mode = "override"
+    state.active_preset_id = None
+    state.active_override_id = event.id
+    state.active_content_id = None
+    state.started_at = now
+    state.ends_at = event.ends_at
+    state.state_json = json.dumps(payload)
+    db.add(state)
+    db.commit()
+    db.refresh(state)
+    return state
 
-    query = request.url.query
-    url = f"{CURRENT_PROXY_ORIGIN}{path}"
-    if query:
-        url = f"{url}?{query}"
-
-    headers = {k: v for k, v in request.headers.items() if k.lower() not in {"host", "content-length"}}
-    headers["origin"] = CURRENT_PROXY_ORIGIN
-    headers["referer"] = CURRENT_PROXY_ORIGIN + "/"
-    body = await request.body()
-    with httpx.Client(follow_redirects=True, timeout=20.0) as client:
-        res = client.request(request.method, url, headers=headers, content=body)
-    excluded = {"content-encoding", "transfer-encoding", "connection", "content-length"}
-    out_headers = {k: v for k, v in res.headers.items() if k.lower() not in excluded}
-    out_headers.pop("x-frame-options", None)
-    csp_value = out_headers.get("content-security-policy")
-    if csp_value and "frame-ancestors" in csp_value.lower():
-        out_headers.pop("content-security-policy", None)
-    content_type = res.headers.get("content-type", "")
-    if "text/html" in content_type.lower():
-        rewritten = _rewrite_html_for_proxy(res.text, str(res.url))
-        return HTMLResponse(content=rewritten, status_code=res.status_code, headers=out_headers)
-    return Response(content=res.content, status_code=res.status_code, media_type=content_type or None, headers=out_headers)
-
-
-@app.api_route("/playback/site", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
-@app.api_route("/playback/site/{site_path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
-async def playback_site_proxy(request: Request, site_path: str = ""):
-    path = "/" + site_path if site_path else CURRENT_PROXY_BASE_PATH
-    return await _proxy_to_current_origin(path, request)
 
 app.add_middleware(
     CORSMiddleware,
@@ -228,7 +242,7 @@ app.add_middleware(
 @app.middleware("http")
 async def playback_referrer_policy(request: Request, call_next):
     response = await call_next(request)
-    if request.url.path.startswith("/playback"):
+    if request.url.path.startswith("/api/playback"):
         response.headers["Referrer-Policy"] = "no-referrer"
     return response
 
@@ -489,51 +503,91 @@ def delete_schedule(schedule_id: str, db: Session = Depends(get_db), _: User = D
     return {"status": "deleted"}
 
 
-@app.post("/api/webhooks")
-def create_webhook(payload: WebhookIn, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    endpoint = WebhookEndpoint(
-        name=payload.name,
-        slug=payload.slug,
-        token_hash=hash_token(payload.token),
-        allowed_actions=",".join(payload.allowed_actions),
-        enabled=payload.enabled,
+@app.get("/api/webhook-config")
+def get_webhook_config(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    cfg = _get_central_webhook_config(db)
+    tokens_out: list[dict[str, str]] = []
+    for item in cfg["tokens"]:
+        try:
+            plain = decrypt_secret(str(item["token_encrypted"]))
+        except Exception:
+            plain = ""
+        preview = ""
+        if plain:
+            if len(plain) <= 10:
+                preview = plain[:3] + "..."
+            else:
+                preview = plain[:6] + "..." + plain[-4:]
+        tokens_out.append({"id": str(item["id"]), "name": str(item["name"]), "token_preview": preview})
+    return {
+        "endpoint": "/webhook",
+        "enabled": bool(cfg["enabled"]),
+        "tokens": tokens_out,
+        "token_configured": bool(tokens_out) or bool(cfg["legacy_token_hash"]),
+        "legacy_token_configured": bool(cfg["legacy_token_hash"]),
+    }
+
+
+@app.put("/api/webhook-config")
+def put_webhook_config(payload: WebhookConfigIn, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    existing = _get_central_webhook_config(db)
+    token_count = len(existing["tokens"])
+    if token_count == 0 and not existing["legacy_token_hash"]:
+        raise HTTPException(status_code=400, detail="Mindestens ein Token muss hinterlegt sein")
+    _put_central_webhook_config(db, payload.enabled, existing["tokens"], str(existing["legacy_token_hash"]))
+    db.commit()
+    return {"status": "ok", "endpoint": "/webhook", "enabled": payload.enabled, "token_configured": True}
+
+
+@app.post("/api/webhook-config/tokens")
+def create_webhook_token(payload: WebhookTokenIn, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    name_clean = str(payload.name or "").strip()
+    if not name_clean:
+        raise HTTPException(status_code=400, detail="Token-Name darf nicht leer sein")
+    token_clean = secrets.token_hex(24)
+    cfg = _get_central_webhook_config(db)
+    tokens = list(cfg["tokens"])
+    token_hash_value = hash_token(token_clean)
+    if any(str(item.get("token_hash", "")) == token_hash_value for item in tokens):
+        raise HTTPException(status_code=409, detail="Token existiert bereits")
+    tokens.append(
+        {
+            "id": str(uuid.uuid4()),
+            "name": name_clean,
+            "token_hash": token_hash_value,
+            "token_encrypted": encrypt_secret(token_clean),
+        }
     )
-    db.add(endpoint)
+    _put_central_webhook_config(db, bool(cfg["enabled"]), tokens, str(cfg["legacy_token_hash"]))
     db.commit()
-    db.refresh(endpoint)
-    return {"id": endpoint.id, "slug": endpoint.slug}
+    return {"status": "created"}
 
 
-@app.put("/api/webhooks/{webhook_id}")
-def update_webhook(webhook_id: str, payload: WebhookIn, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    endpoint = db.get(WebhookEndpoint, webhook_id)
-    if not endpoint:
-        raise HTTPException(status_code=404, detail="Not found")
-    endpoint.name = payload.name
-    endpoint.slug = payload.slug
-    endpoint.token_hash = hash_token(payload.token)
-    endpoint.allowed_actions = ",".join(payload.allowed_actions)
-    endpoint.enabled = payload.enabled
-    db.add(endpoint)
-    db.commit()
-    db.refresh(endpoint)
-    return {"id": endpoint.id, "slug": endpoint.slug}
+@app.get("/api/webhook-config/tokens/{token_id}/secret")
+def get_webhook_token_secret(token_id: str, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    cfg = _get_central_webhook_config(db)
+    selected = next((item for item in cfg["tokens"] if str(item.get("id", "")) == token_id), None)
+    if not selected:
+        raise HTTPException(status_code=404, detail="Token not found")
+    try:
+        plain = decrypt_secret(str(selected.get("token_encrypted", "")))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Token konnte nicht gelesen werden") from exc
+    return {"id": token_id, "name": str(selected.get("name", "Token")), "token": plain}
 
 
-@app.delete("/api/webhooks/{webhook_id}")
-def delete_webhook(webhook_id: str, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    endpoint = db.get(WebhookEndpoint, webhook_id)
-    if not endpoint:
-        raise HTTPException(status_code=404, detail="Not found")
-    db.delete(endpoint)
+@app.delete("/api/webhook-config/tokens/{token_id}")
+def delete_webhook_token(token_id: str, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    cfg = _get_central_webhook_config(db)
+    tokens = list(cfg["tokens"])
+    filtered = [item for item in tokens if str(item.get("id", "")) != token_id]
+    if len(filtered) == len(tokens):
+        raise HTTPException(status_code=404, detail="Token not found")
+    if len(filtered) == 0 and not cfg["legacy_token_hash"]:
+        raise HTTPException(status_code=400, detail="Mindestens ein Token muss hinterlegt bleiben")
+    _put_central_webhook_config(db, bool(cfg["enabled"]), filtered, str(cfg["legacy_token_hash"]))
     db.commit()
     return {"status": "deleted"}
-
-
-@app.get("/api/webhooks")
-def list_webhooks(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    rows = db.execute(select(WebhookEndpoint).order_by(WebhookEndpoint.created_at.desc())).scalars().all()
-    return [{"id": w.id, "name": w.name, "slug": w.slug, "enabled": w.enabled, "allowed_actions": w.allowed_actions.split(",")} for w in rows]
 
 
 @app.post("/api/auth-profiles", response_model=AuthProfileOut)
@@ -609,38 +663,47 @@ def put_setting(key: str, payload: SystemSettingIn, db: Session = Depends(get_db
     return SystemSettingOut(key=obj.key, value=json.loads(obj.value_json), updated_at=obj.updated_at)
 
 
-@app.post("/webhook/{slug}")
+@app.post("/webhook")
 def webhook(
-    slug: str,
     payload: WebhookTriggerIn,
     token: str = Query(default=""),
     x_signalkiosk_token: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ):
-    endpoint = db.execute(select(WebhookEndpoint).where(WebhookEndpoint.slug == slug, WebhookEndpoint.enabled.is_(True))).scalars().first()
-    if not endpoint:
-        raise HTTPException(status_code=404, detail="Webhook endpoint not found")
+    cfg = _get_central_webhook_config(db)
+    if not cfg["enabled"]:
+        raise HTTPException(status_code=403, detail="Webhook is disabled")
+    token_hashes = {str(item["token_hash"]) for item in cfg["tokens"]}
+    legacy_hash = str(cfg["legacy_token_hash"])
+    if legacy_hash:
+        token_hashes.add(legacy_hash)
+    if not token_hashes:
+        raise HTTPException(status_code=503, detail="Webhook token is not configured")
     auth_token = x_signalkiosk_token if x_signalkiosk_token else token
-    if endpoint.token_hash != hash_token(auth_token):
+    if hash_token(auth_token) not in token_hashes:
         raise HTTPException(status_code=401, detail="Invalid token")
-    allowed = set(endpoint.allowed_actions.split(","))
-    if payload.action not in allowed:
-        raise HTTPException(status_code=403, detail="Action not allowed")
+    normalized_payload = _normalize_webhook_trigger_payload(payload)
 
     now = datetime.now(timezone.utc)
-    ends = now + timedelta(seconds=payload.duration_seconds)
+    duration_seconds = int(normalized_payload.get("duration_seconds", 60))
+    apply_mode = str(normalized_payload.get("apply_mode", "replace_now"))
+    ends = now + timedelta(seconds=duration_seconds)
     event = OverrideEvent(
-        source_webhook_id=endpoint.id,
-        action=payload.action,
-        payload_json=json.dumps(payload.model_dump()),
-        duration_seconds=payload.duration_seconds,
-        priority=payload.priority,
+        source_webhook_id=None,
+        action=str(normalized_payload.get("content_type", "webpage")),
+        payload_json=json.dumps(normalized_payload),
+        duration_seconds=duration_seconds,
+        priority=int(normalized_payload.get("priority", 100)),
         ends_at=ends,
+        status="queued" if apply_mode == "queue_next_once" else "active",
     )
     db.add(event)
     db.commit()
 
-    state = advance_rotation(db, now)
+    if apply_mode == "replace_now":
+        state = _activate_override_event_now(db, event, now)
+    else:
+        state = advance_rotation(db, now)
     return {"status": "accepted", "playback": {"mode": state.active_mode, "active_content_id": state.active_content_id, "ends_at": state.ends_at}}
 
 
@@ -661,77 +724,28 @@ def playback_status(db: Session = Depends(get_db), _: User = Depends(get_current
 @app.get("/api/playback/public-status")
 def playback_public_status(db: Session = Depends(get_db)):
     state = advance_rotation(db, datetime.now(timezone.utc))
-    rev = db.get(SystemSetting, "playback.revision")
-    revision = 0
-    if rev:
-        try:
-            revision = int(json.loads(rev.value_json).get("value", 0))
-        except Exception:
-            revision = 0
     return {
         "active_content_id": state.active_content_id,
         "active_mode": state.active_mode,
         "ends_at": state.ends_at.isoformat() if state.ends_at else None,
-        "revision": revision,
+        "revision": _get_playback_revision(db),
     }
 
 
-@app.get("/playback/proxy", response_class=HTMLResponse)
-def playback_proxy(target: str = Query(default="")):
-    if not target.startswith("http://") and not target.startswith("https://"):
-        raise HTTPException(status_code=400, detail="Invalid target URL")
-    try:
-        _set_proxy_origin(target)
-        with httpx.Client(follow_redirects=True, timeout=12.0) as client:
-            res = client.get(target)
-        content_type = res.headers.get("content-type", "text/html")
-        text = res.text
-        if "text/html" in content_type.lower():
-            text = _rewrite_html_for_proxy(text, str(res.url))
-        excluded = {"content-encoding", "transfer-encoding", "connection", "content-length", "x-frame-options", "content-security-policy", "frame-options"}
-        out_headers = {k: v for k, v in res.headers.items() if k.lower() not in excluded}
-        return HTMLResponse(content=text, status_code=res.status_code, headers=out_headers)
-    except Exception as exc:
-        return HTMLResponse(content=f"<html><body>Proxy-Fehler: {html.escape(str(exc))}</body></html>", status_code=502)
-
-
-@app.get("/playback/proxy-asset")
-def playback_proxy_asset(target: str = Query(default="")):
-    if not target.startswith("http://") and not target.startswith("https://"):
-        raise HTTPException(status_code=400, detail="Invalid target URL")
-    try:
-        with httpx.Client(follow_redirects=True, timeout=15.0) as client:
-            res = client.get(target)
-        content_type = res.headers.get("content-type", "application/octet-stream")
-        excluded = {"content-encoding", "transfer-encoding", "connection", "content-length", "x-frame-options", "content-security-policy", "frame-options"}
-        out_headers = {k: v for k, v in res.headers.items() if k.lower() not in excluded}
-        return Response(content=res.content, media_type=content_type, headers=out_headers)
-    except Exception as exc:
-        return Response(content=f"Proxy-Asset-Fehler: {str(exc)}".encode("utf-8"), media_type="text/plain", status_code=502)
-
-
-@app.api_route("/socket.io", methods=["GET", "POST"])
-@app.api_route("/socket.io/{rest:path}", methods=["GET", "POST"])
-async def playback_proxy_socket(request: Request, rest: str = ""):
-    path = "/socket.io" + (f"/{rest}" if rest else "")
-    return await _proxy_to_current_origin(path, request)
-
-
-@app.api_route("/playback/{asset_path:path}", methods=["GET", "POST"])
-async def playback_proxy_playback_assets(request: Request, asset_path: str):
-    if asset_path == "":
-        raise HTTPException(status_code=404, detail="Not found")
-    path = f"/playback/{asset_path}"
-    proxied = await _proxy_to_current_origin(path, request)
-    ctype = (proxied.media_type or "").lower()
-    if asset_path.endswith(".js") and "text/html" in ctype:
-        fallback_path = f"/{asset_path}"
-        return await _proxy_to_current_origin(fallback_path, request)
-    return proxied
-
-
-def _build_playback_fragment(db: Session) -> dict[str, str | None]:
+def _resolve_playback_command(db: Session) -> dict[str, object]:
     state = advance_rotation(db, datetime.now(timezone.utc))
+    revision = _get_playback_revision(db)
+    base = {
+        "revision": revision,
+        "mode": state.active_mode,
+        "active_content_id": state.active_content_id,
+        "ends_at": state.ends_at.isoformat() if state.ends_at else None,
+        "content_type": None,
+        "url": None,
+        "html": None,
+        "asset_path": None,
+    }
+
     if state.active_mode == "override":
         try:
             payload = json.loads(state.state_json or "{}")
@@ -739,24 +753,30 @@ def _build_playback_fragment(db: Session) -> dict[str, str | None]:
             payload = {}
         if not isinstance(payload, dict):
             payload = {}
-        action = payload.get("action")
-        if action == "play_url" and payload.get("url"):
-            url = str(payload["url"])
-            if _url_is_probably_frame_blocked(url):
-                _set_proxy_origin(url)
-                src = _to_site_proxy_path(url)
-            else:
-                src = url
-            return {"mode": state.active_mode, "active_content_id": state.active_content_id, "ends_at": state.ends_at.isoformat() if state.ends_at else None, "html": f"<iframe src='{src}' style='border:0;width:100vw;height:100vh'></iframe>"}
-        if action == "play_html":
-            return {"mode": state.active_mode, "active_content_id": state.active_content_id, "ends_at": state.ends_at.isoformat() if state.ends_at else None, "html": str(payload.get("html", ""))}
+        content_type = str(payload.get("content_type") or payload.get("action") or "").strip().lower()
+        if content_type in {"webpage", "play_url"} and payload.get("url"):
+            base.update({"content_type": "webpage", "url": str(payload["url"])})
+            return base
+        if content_type in {"html", "play_html"}:
+            base.update({"content_type": "html", "html": str(payload.get("html", ""))})
+            return base
+        if content_type == "image":
+            src = str(payload.get("asset_path") or payload.get("url") or "")
+            base.update({"content_type": "image", "asset_path": src})
+            return base
+        if content_type == "video":
+            src = str(payload.get("asset_path") or payload.get("url") or "")
+            base.update({"content_type": "video", "asset_path": src})
+            return base
 
     if not state.active_content_id:
-        return {"mode": state.active_mode, "active_content_id": None, "ends_at": state.ends_at.isoformat() if state.ends_at else None, "html": "<div style='font-family:sans-serif;background:#111;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh'>Fallback: Kein aktiver Inhalt</div>"}
+        base.update({"content_type": "html", "html": "<div style='font-family:sans-serif;background:#111;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh'>Fallback: Kein aktiver Inhalt</div>"})
+        return base
 
     content = db.get(Content, state.active_content_id)
     if not content:
-        return {"mode": state.active_mode, "active_content_id": state.active_content_id, "ends_at": state.ends_at.isoformat() if state.ends_at else None, "html": "<div style='font-family:sans-serif;padding:18px'>Fehler: Inhalt nicht gefunden</div>"}
+        base.update({"content_type": "html", "html": "<div style='font-family:sans-serif;padding:18px'>Fehler: Inhalt nicht gefunden</div>"})
+        return base
 
     try:
         cfg = json.loads(content.config_json)
@@ -766,97 +786,47 @@ def _build_playback_fragment(db: Session) -> dict[str, str | None]:
         cfg = {}
 
     ctype = str(content.type or "").strip().lower()
-
     if ctype == "webpage":
         src = str(cfg.get("url", "about:blank"))
-        webpage_mode = str(cfg.get("webpage_mode", "embedded")).strip().lower()
-        if webpage_mode == "direct" and src:
-            _set_proxy_origin(src)
-            src = "/playback/site"
-        elif src and _url_is_probably_frame_blocked(src):
-            _set_proxy_origin(src)
-            src = _to_site_proxy_path(src)
-        html_fragment = f"<iframe src='{src}' style='border:0;width:100vw;height:100vh'></iframe>"
+        base.update({"content_type": "webpage", "url": src})
     elif ctype == "image":
         src = str(cfg.get("asset_path") or cfg.get("url", ""))
-        html_fragment = f"<img src='{src}' style='width:100vw;height:100vh;object-fit:contain'>"
+        base.update({"content_type": "image", "asset_path": src})
     elif ctype == "video":
         src = str(cfg.get("asset_path") or cfg.get("url", ""))
-        html_fragment = f"<video src='{src}' autoplay muted controls style='width:100vw;height:100vh;object-fit:contain'></video>"
+        base.update({"content_type": "video", "asset_path": src})
     elif ctype == "html":
-        html_fragment = str(cfg.get("html", ""))
+        base.update({"content_type": "html", "html": str(cfg.get("html", ""))})
     else:
-        html_fragment = f"<div style='font-family:sans-serif;color:#fff;background:#111;height:100vh;display:flex;align-items:center;justify-content:center;padding:18px'>Unbekannter Inhaltstyp: {html.escape(str(content.type))}</div>"
-
-    return {"mode": state.active_mode, "active_content_id": state.active_content_id, "ends_at": state.ends_at.isoformat() if state.ends_at else None, "html": html_fragment}
-
-
-@app.get("/api/playback/render")
-def playback_render(db: Session = Depends(get_db)):
-    return _build_playback_fragment(db)
+        base.update({"content_type": "html", "html": f"<div style='font-family:sans-serif;color:#fff;background:#111;height:100vh;display:flex;align-items:center;justify-content:center;padding:18px'>Unbekannter Inhaltstyp: {html.escape(str(content.type))}</div>"})
+    return base
 
 
-@app.get("/playback", response_class=HTMLResponse)
-def playback_page(request: Request, db: Session = Depends(get_db)):
-    try:
-        initial = _build_playback_fragment(db)
-        initial_sig = {
-            "active_mode": initial.get("mode"),
-            "active_content_id": initial.get("active_content_id"),
-            "ends_at": initial.get("ends_at"),
-        }
-        return (
-            "<html><body style='margin:0;background:#000;overflow:hidden'>"
-            "<div id='root' style='width:100vw;height:100vh'></div>"
-            "<div id='countdown' style='position:fixed;top:10px;right:10px;z-index:9999;padding:6px 10px;border-radius:8px;background:rgba(0,0,0,.55);color:#fff;font-family:Arial,sans-serif;font-size:14px;line-height:1;pointer-events:none'></div>"
-            "<script>"
-            f"let last={json.dumps(initial_sig)};"
-            "let countdownTimer=null;"
-            "function parseEndsAt(endsAt){"
-            "if(!endsAt) return null;"
-            "const raw=String(endsAt);"
-            "const hasTz=/[zZ]|[+-]\\d\\d:\\d\\d$/.test(raw);"
-            "const normalized=hasTz?raw:(raw+'Z');"
-            "const ts=Date.parse(normalized);"
-            "return Number.isNaN(ts)?null:ts;"
-            "}"
-            "function formatRemaining(endsAt){"
-            "const ts=parseEndsAt(endsAt);"
-            "if(ts===null) return '';"
-            "const diff=Math.max(0,Math.ceil((ts-Date.now())/1000));"
-            "return String(diff);"
-            "}"
-            "function updateCountdown(){"
-            "const el=document.getElementById('countdown');"
-            "if(!el) return;"
-            "const t=formatRemaining(last.ends_at);"
-            "el.textContent=t ? (t + ' Sek') : '';"
-            "el.style.display=t ? 'block' : 'none';"
-            "}"
-            "function startCountdown(){"
-            "if(countdownTimer!==null) clearInterval(countdownTimer);"
-            "updateCountdown();"
-            "countdownTimer=setInterval(updateCountdown,1000);"
-            "}"
-            f"document.getElementById('root').innerHTML={json.dumps(initial.get('html', ''))};"
-            "startCountdown();"
-            "async function tick(){"
-            "try{"
-            "const s=await fetch('/api/playback/public-status');const status=await s.json();"
-            "const next={active_mode:status.active_mode,active_content_id:status.active_content_id,ends_at:status.ends_at};"
-            "if(JSON.stringify(next)!==JSON.stringify(last)){"
-            "const r=await fetch('/api/playback/render');const data=await r.json();"
-            "document.getElementById('root').innerHTML=String(data.html||'');"
-            "last={active_mode:data.mode,active_content_id:data.active_content_id,ends_at:data.ends_at};"
-            "updateCountdown();"
-            "}"
-            "}catch(e){}"
-            "}"
-            "setInterval(tick,3000);"
-            "</script></body></html>"
-        )
-    except Exception as exc:
-        return f"<html><body style='font-family:sans-serif;padding:18px'>Playback Fehler: {html.escape(str(exc))}</body></html>"
+def _playback_command_hash(command: dict[str, object]) -> str:
+    fingerprint = {
+        "mode": command.get("mode"),
+        "active_content_id": command.get("active_content_id"),
+        "content_type": command.get("content_type"),
+        "url": command.get("url"),
+        "html": command.get("html"),
+        "asset_path": command.get("asset_path"),
+    }
+    return json.dumps(fingerprint, sort_keys=True, ensure_ascii=True)
+
+@app.get("/api/playback/command")
+def playback_command(
+    db: Session = Depends(get_db),
+    since_revision: int | None = Query(default=None, ge=0),
+    since_hash: str | None = Query(default=None),
+):
+    command = _resolve_playback_command(db)
+    command_hash = _playback_command_hash(command)
+    revision = int(command.get("revision") or 0)
+    same_revision = since_revision is not None and revision <= since_revision
+    same_hash = since_hash is not None and since_hash == command_hash
+    if same_revision and same_hash:
+        return {"revision": revision, "hash": command_hash, "changed": False}
+    return {"changed": True, "hash": command_hash, **command}
 
 
 @app.get("/api/system/health")

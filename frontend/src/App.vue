@@ -1,17 +1,19 @@
 <script setup lang="ts">
-import { computed } from "vue"
+import { computed, ref } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import { useI18n } from "./i18n"
+import { showToast } from "./state/toast"
 import { useToastState } from "./state/toast"
 
 const route = useRoute()
 const router = useRouter()
-const { locale, setLocale, t } = useI18n()
+const { locale, applyLocale, setLocale, t } = useI18n()
 const toast = useToastState()
+const savedLocale = ref(localStorage.getItem("locale") === "en" ? "en" : "de")
 const isLoginRoute = computed(() => route.path === "/login")
 const playbackUrl = computed(() => {
   const playbackPort = import.meta.env.VITE_PLAYBACK_PORT || "8090"
-  return `${window.location.protocol}//${window.location.hostname}:${playbackPort}/playback`
+  return `${window.location.protocol}//${window.location.hostname}:${playbackPort}/api/playback/status`
 })
 
 const logout = (): void => {
@@ -21,7 +23,14 @@ const logout = (): void => {
 
 const handleLocaleChange = (event: Event): void => {
   const value = (event.target as HTMLSelectElement).value
-  if (value === "de" || value === "en") setLocale(value)
+  if (value === "de" || value === "en") applyLocale(value)
+}
+
+const saveLocale = (): void => {
+  if (locale.value === savedLocale.value) return
+  setLocale(locale.value)
+  savedLocale.value = locale.value
+  showToast(locale.value === "de" ? "Einstellung gespeichert." : "Setting saved.")
 }
 </script>
 
@@ -43,6 +52,7 @@ const handleLocaleChange = (event: Event): void => {
           <option value="de">{{ t("german") }}</option>
           <option value="en">{{ t("english") }}</option>
         </select>
+        <button type="button" class="locale-save" @click="saveLocale" :disabled="savedLocale === locale">{{ t("save") }}</button>
       </label>
       <button @click="logout">{{ t("logout") }}</button>
     </aside>
@@ -81,6 +91,17 @@ button:hover { background: rgba(216, 229, 241, 0.16); }
 .locale-picker { margin-top: auto; display: grid; gap: 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.1em; color: #bdd6e7; }
 .locale-picker select { border-radius: 8px; border: 1px solid rgba(173, 204, 224, 0.6); background: rgba(255, 255, 255, 0.1); color: #e5f0f8; min-height: 36px; padding: 6px 8px; }
 .locale-picker select option { color: #123247; background: #ffffff; }
+.locale-save {
+  margin-top: 0 !important;
+  min-height: 36px;
+  border-radius: 8px;
+  border: 1px solid rgba(173, 204, 224, 0.7);
+  background: rgba(255, 255, 255, 0.08);
+}
+.locale-save:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
 button { margin-top: 8px; }
 .toast {
   position: fixed;

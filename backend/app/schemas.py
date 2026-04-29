@@ -104,15 +104,22 @@ class WebhookIn(BaseModel):
     enabled: bool = True
 
 
+class WebhookConfigIn(BaseModel):
+    enabled: bool = True
+
+
+class WebhookTokenIn(BaseModel):
+    name: str
+
+
 class WebhookTriggerIn(BaseModel):
-    action: str
+    content_type: str
     url: str | None = None
-    content_id: str | None = None
-    preset_id: str | None = None
+    html: str | None = None
+    asset_path: str | None = None
     duration_seconds: int = Field(default=60, ge=1, le=86400)
-    mode: str = "replace_current"
+    apply_mode: str = "replace_now"
     priority: int = 100
-    return_to_previous: bool = True
 
 
 class AuthProfileIn(BaseModel):

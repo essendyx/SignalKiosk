@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     cors_allowed_origins: str = ""
     default_admin_username: str = "admin"
     default_admin_password: str = "admin123!"
+    playback_debug_mode: bool = False
 
     @property
     def cors_origins(self) -> list[str]:

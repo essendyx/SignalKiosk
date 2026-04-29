@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from .models import Content, OverrideEvent, PlaybackState, Preset, PresetItem, Schedule
+from .models import Content, OverrideEvent, PlaybackState, Preset, PresetItem, Schedule, SystemSetting
 
 
 @dataclass
@@ -53,15 +53,57 @@ def ensure_playback_state(db: Session) -> PlaybackState:
     return state
 
 
+def _get_playback_revision(db: Session) -> int:
+    rev = db.get(SystemSetting, "playback.revision")
+    if not rev:
+        return 0
+    try:
+        payload = json.loads(rev.value_json or "{}")
+    except Exception:
+        return 0
+    if not isinstance(payload, dict):
+        return 0
+    try:
+        return int(payload.get("value", 0))
+    except Exception:
+        return 0
+
+
+def _promote_next_queued_override(db: Session, now_utc: datetime) -> None:
+    active_override = db.execute(
+        select(OverrideEvent).where(OverrideEvent.status == "active", OverrideEvent.ends_at > now_utc)
+    ).scalars().first()
+    if active_override:
+        return
+    queued = db.execute(
+        select(OverrideEvent).where(OverrideEvent.status == "queued").order_by(OverrideEvent.created_at.asc())
+    ).scalars().first()
+    if not queued:
+        return
+    queued.status = "active"
+    queued.started_at = now_utc
+    queued.ends_at = now_utc + timedelta(seconds=queued.duration_seconds)
+    db.add(queued)
+    db.commit()
+
+
 def advance_rotation(db: Session, now_utc: datetime) -> PlaybackState:
     state = ensure_playback_state(db)
+    state_data = json.loads(state.state_json or "{}") if state.state_json else {}
+    if not isinstance(state_data, dict):
+        state_data = {}
+    current_revision = _get_playback_revision(db)
+    state_revision = int(state_data.get("playback_revision", 0) or 0)
+    force_refresh = current_revision != state_revision
     ends_at = state.ends_at
     if ends_at and ends_at.tzinfo is None:
         now_cmp = now_utc.replace(tzinfo=None)
     else:
         now_cmp = now_utc
-    if ends_at and now_cmp < ends_at and state.active_content_id:
+    if (not force_refresh) and ends_at and now_cmp < ends_at and state.active_content_id:
         return state
+
+    _promote_next_queued_override(db, now_utc)
 
     decision = evaluate_schedule(db, now_utc)
     state.active_mode = decision.mode
@@ -72,6 +114,7 @@ def advance_rotation(db: Session, now_utc: datetime) -> PlaybackState:
         if ov:
             payload = json.loads(ov.payload_json)
             payload["reason"] = decision.reason
+            payload["playback_revision"] = current_revision
             state.active_override_id = ov.id
             state.active_content_id = payload.get("content_id")
             state.started_at = now_utc
@@ -83,15 +126,19 @@ def advance_rotation(db: Session, now_utc: datetime) -> PlaybackState:
         ).scalars().all()
         if items:
             state_data = json.loads(state.state_json or "{}")
+            if not isinstance(state_data, dict):
+                state_data = {}
             previous_preset_id = state_data.get("preset_id")
             previous_index = int(state_data.get("item_index", -1))
             if previous_preset_id != decision.preset_id:
                 next_index = 0
+            elif force_refresh:
+                next_index = previous_index if previous_index >= 0 else 0
             else:
                 next_index = previous_index + 1
 
             preset = db.get(Preset, decision.preset_id)
-            if preset and preset.shuffle:
+            if preset and preset.shuffle and not force_refresh:
                 next_index = int(now_utc.timestamp()) % len(items)
             elif next_index >= len(items):
                 if preset and preset.loop_mode:
@@ -117,17 +164,17 @@ def advance_rotation(db: Session, now_utc: datetime) -> PlaybackState:
             state.active_override_id = None
             state.started_at = now_utc
             state.ends_at = now_utc + timedelta(seconds=duration)
-            state.state_json = json.dumps({"reason": decision.reason, "preset_id": decision.preset_id, "item_index": next_index})
+            state.state_json = json.dumps({"reason": decision.reason, "preset_id": decision.preset_id, "item_index": next_index, "playback_revision": current_revision})
         else:
             state.active_content_id = None
             state.ends_at = None
-            state.state_json = json.dumps({"reason": "preset has no items"})
+            state.state_json = json.dumps({"reason": "preset has no items", "playback_revision": current_revision})
     else:
         state.active_content_id = None
         state.active_override_id = None
         state.started_at = now_utc
         state.ends_at = None
-        state.state_json = json.dumps({"reason": "fallback"})
+        state.state_json = json.dumps({"reason": "fallback", "playback_revision": current_revision})
 
     db.add(state)
     db.commit()

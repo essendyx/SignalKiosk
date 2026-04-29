@@ -5,64 +5,89 @@ import { useI18n } from "../i18n"
 import { useUnsavedChangesGuard } from "../composables/useUnsavedChangesGuard"
 import { showToast } from "../state/toast"
 
-interface Webhook { id: string; name: string; slug: string; enabled: boolean; allowed_actions: string[] }
-const items = ref<Webhook[]>([])
-const name = ref("")
-const slug = ref("")
-const token = ref("")
-const editingId = ref<string | null>(null)
+interface WebhookToken {
+  id: string
+  name: string
+  token_preview: string
+}
+
+interface WebhookConfigResponse {
+  endpoint: string
+  enabled: boolean
+  token_configured: boolean
+  legacy_token_configured: boolean
+  tokens: WebhookToken[]
+}
+
+const endpoint = ref("/webhook")
+const enabled = ref(true)
+const tokenConfigured = ref(false)
+const legacyTokenConfigured = ref(false)
+const tokens = ref<WebhookToken[]>([])
+const newTokenName = ref("")
 const tokenMessage = ref("")
 const { locale, t } = useI18n()
-const isDirty = computed(() => Boolean(name.value.trim() || slug.value.trim() || token.value.trim() || editingId.value))
+const initialFormSnapshot = ref("")
+
+const formSnapshot = (): string => JSON.stringify({ enabled: enabled.value })
+const markClean = (): void => {
+  initialFormSnapshot.value = formSnapshot()
+}
+const isDirty = computed(() => formSnapshot() !== initialFormSnapshot.value)
 
 const load = async (): Promise<void> => {
-  const res = await api.get("/webhooks")
-  items.value = res.data as Webhook[]
+  const res = await api.get("/webhook-config")
+  const data = res.data as WebhookConfigResponse
+  endpoint.value = data.endpoint || "/webhook"
+  enabled.value = Boolean(data.enabled)
+  tokenConfigured.value = Boolean(data.token_configured)
+  legacyTokenConfigured.value = Boolean(data.legacy_token_configured)
+  tokens.value = Array.isArray(data.tokens) ? data.tokens : []
+  if (!initialFormSnapshot.value) markClean()
 }
 
 const save = async (): Promise<void> => {
-  const payload = { name: name.value, slug: slug.value, token: token.value, enabled: true, allowed_actions: ["play_url", "play_existing_content", "play_preset", "stop_override"] }
-  if (editingId.value) await api.put(`/webhooks/${editingId.value}`, payload)
-  else await api.post("/webhooks", payload)
-  name.value = ""
-  slug.value = ""
-  token.value = ""
-  editingId.value = null
-  await load()
-  showToast(locale.value === "de" ? "Webhook gespeichert." : "Webhook saved.")
-}
-
-const editItem = (item: Webhook): void => {
-  editingId.value = item.id
-  name.value = item.name
-  slug.value = item.slug
-  token.value = ""
-}
-
-const remove = async (id: string): Promise<void> => {
-  await api.delete(`/webhooks/${id}`)
-  await load()
-  showToast(locale.value === "de" ? "Webhook geloescht." : "Webhook deleted.")
+  await api.put("/webhook-config", { enabled: enabled.value })
+  markClean()
+  showToast(locale.value === "de" ? "Webhook-Konfiguration gespeichert." : "Webhook configuration saved.")
 }
 
 const generateToken = (): void => {
-  const bytes = new Uint8Array(24)
-  crypto.getRandomValues(bytes)
-  token.value = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")
-  tokenMessage.value = locale.value === "de" ? "Token wurde neu generiert." : "Token was regenerated."
+  tokenMessage.value = locale.value === "de" ? "Token wird beim Hinzufuegen automatisch erzeugt." : "Token is generated automatically when added."
 }
 
-const copyToken = async (): Promise<void> => {
-  if (!token.value) {
-    tokenMessage.value = locale.value === "de" ? "Kein Token zum Kopieren vorhanden." : "No token available to copy."
-    return
-  }
+const copyToken = async (id: string): Promise<void> => {
   try {
-    await navigator.clipboard.writeText(token.value)
+    const res = await api.get(`/webhook-config/tokens/${id}/secret`)
+    const token = String((res.data as { token?: string }).token || "")
+    if (!token) {
+      tokenMessage.value = locale.value === "de" ? "Token konnte nicht gelesen werden." : "Token could not be read."
+      return
+    }
+    await navigator.clipboard.writeText(token)
     tokenMessage.value = locale.value === "de" ? "Token wurde in die Zwischenablage kopiert." : "Token copied to clipboard."
   } catch {
     tokenMessage.value = locale.value === "de" ? "Kopieren fehlgeschlagen." : "Copy failed."
   }
+}
+
+const createToken = async (): Promise<void> => {
+  const name = newTokenName.value.trim()
+  if (!name) {
+    tokenMessage.value = locale.value === "de" ? "Name ist erforderlich." : "Name is required."
+    return
+  }
+  await api.post("/webhook-config/tokens", { name })
+  newTokenName.value = ""
+  await load()
+  tokenConfigured.value = true
+  showToast(locale.value === "de" ? "Token hinzugefuegt." : "Token added.")
+}
+
+const removeToken = async (id: string): Promise<void> => {
+  await api.delete(`/webhook-config/tokens/${id}`)
+  await load()
+  showToast(locale.value === "de" ? "Token geloescht." : "Token deleted.")
 }
 
 onMounted(load)
@@ -72,59 +97,69 @@ useUnsavedChangesGuard(isDirty, locale)
 <template>
   <section class="page">
     <h2 class="page-title">Webhooks</h2>
-    <p class="page-subtitle">{{ locale === 'de' ? 'Externe Systeme koennen Playback-Events sicher ueber diese Endpunkte ausloesen.' : 'External systems can securely trigger playback events through these endpoints.' }}</p>
-    <div class="card webhook-help">
-      <h3>{{ locale === 'de' ? 'So funktioniert der Aufruf' : 'How webhook calls work' }}</h3>
-      <p>
-        {{ locale === 'de'
-          ? 'Der Slug ist der eindeutige URL-Teil deines Webhooks. Aus Slug "fire-alarm" wird der Endpoint /webhook/fire-alarm.'
-          : 'The slug is the unique URL segment of your webhook. Slug "fire-alarm" becomes endpoint /webhook/fire-alarm.' }}
-      </p>
-      <p>
-        {{ locale === 'de'
-          ? 'Authentifizierung: Token entweder als Query-Parameter (token=...) oder als Header X-SignalKiosk-Token mitsenden.'
-          : 'Authentication: send token either as query parameter (token=...) or as header X-SignalKiosk-Token.' }}
-      </p>
-      <p>{{ locale === 'de' ? 'Beispiel: play_url' : 'Example: play_url' }}</p>
-      <pre><code>curl -X POST "http://localhost:8080/webhook/fire-alarm?token=YOUR_TOKEN" -H "Content-Type: application/json" -d "{\"action\":\"play_url\",\"url\":\"https://status.example.org\",\"duration_seconds\":120,\"priority\":100}"</code></pre>
-      <p>{{ locale === 'de' ? 'Beispiel: play_existing_content (mit Header-Token)' : 'Example: play_existing_content (with header token)' }}</p>
-      <pre><code>curl -X POST "http://localhost:8080/webhook/fire-alarm" -H "X-SignalKiosk-Token: YOUR_TOKEN" -H "Content-Type: application/json" -d "{\"action\":\"play_existing_content\",\"content_id\":\"CONTENT_ID\",\"duration_seconds\":90}"</code></pre>
-      <p>{{ locale === 'de' ? 'Beispiel: play_preset' : 'Example: play_preset' }}</p>
-      <pre><code>curl -X POST "http://localhost:8080/webhook/fire-alarm?token=YOUR_TOKEN" -H "Content-Type: application/json" -d "{\"action\":\"play_preset\",\"preset_id\":\"PRESET_ID\",\"duration_seconds\":180}"</code></pre>
-      <p>{{ locale === 'de' ? 'Beispiel: stop_override' : 'Example: stop_override' }}</p>
-      <pre><code>curl -X POST "http://localhost:8080/webhook/fire-alarm?token=YOUR_TOKEN" -H "Content-Type: application/json" -d "{\"action\":\"stop_override\"}"</code></pre>
-    </div>
+    <p class="page-subtitle">{{ locale === 'de' ? 'Ein zentraler Webhook mit beliebig vielen Tokens fuer externe Systeme.' : 'One central webhook with unlimited tokens for external systems.' }}</p>
+
     <div class="card form-grid wide">
-      <label>{{ locale === 'de' ? 'Name' : 'Name' }}<input v-model="name" :placeholder="locale === 'de' ? 'Brandmeldeanlage' : 'Fire alarm'" /></label>
-      <label>Slug<input v-model="slug" placeholder="fire-alarm" /></label>
-      <label>{{ locale === 'de' ? 'Token' : 'Token' }}
+      <label>{{ locale === 'de' ? 'Endpoint' : 'Endpoint' }}<input :value="endpoint" disabled /></label>
+      <label>{{ locale === 'de' ? 'Aktiv' : 'Enabled' }}
+        <select v-model="enabled">
+          <option :value="true">{{ locale === 'de' ? 'Ja' : 'Yes' }}</option>
+          <option :value="false">{{ locale === 'de' ? 'Nein' : 'No' }}</option>
+        </select>
+      </label>
+      <p class="hint full-width">
+        {{ locale === 'de'
+          ? (tokenConfigured ? 'Mindestens ein Token ist hinterlegt.' : 'Es ist noch kein Token hinterlegt.')
+          : (tokenConfigured ? 'At least one token is configured.' : 'No token is configured yet.') }}
+      </p>
+      <p v-if="legacyTokenConfigured" class="hint full-width">{{ locale === 'de' ? 'Hinweis: Ein altes Legacy-Token ist aktiv, kann aber nicht angezeigt werden.' : 'Note: A legacy token is active but cannot be displayed.' }}</p>
+      <div class="toolbar"><button @click="save">{{ t('save') }}</button></div>
+    </div>
+
+    <div class="card form-grid wide">
+      <label>{{ locale === 'de' ? 'Token-Name' : 'Token name' }}<input v-model="newTokenName" :placeholder="locale === 'de' ? 'z. B. Leitwarte' : 'e.g. Control room'" /></label>
+      <label class="full-width">{{ locale === 'de' ? 'Token erzeugen' : 'Generate token' }}
         <div class="token-field">
-          <input v-model="token" type="password" :placeholder="locale === 'de' ? 'Sicherer Zugriffstoken' : 'Secure access token'" />
-          <button class="ghost" type="button" @click="generateToken">{{ locale === 'de' ? 'Generieren' : 'Generate' }}</button>
-          <button class="ghost" type="button" @click="copyToken">{{ locale === 'de' ? 'Kopieren' : 'Copy' }}</button>
+          <button class="ghost" type="button" @click="generateToken">{{ locale === 'de' ? 'Hinweis' : 'Info' }}</button>
+          <button type="button" @click="createToken">{{ locale === 'de' ? 'Token hinzufuegen' : 'Add token' }}</button>
         </div>
       </label>
       <p v-if="tokenMessage" class="hint full-width">{{ tokenMessage }}</p>
-      <p class="hint full-width">
-        {{ locale === 'de'
-          ? 'Webhook-Aufrufe koennen den Token als Query-Parameter (token=...) oder als Custom Header X-SignalKiosk-Token mitsenden.'
-          : 'Webhook requests can send the token as query parameter (token=...) or as custom header X-SignalKiosk-Token.' }}
-      </p>
-      <div class="toolbar"><button @click="save">{{ editingId ? t('save') : t('create') }}</button></div>
     </div>
-    <table class="data-table">
-      <thead><tr><th>{{ locale === 'de' ? 'Name' : 'Name' }}</th><th>Endpoint</th><th>{{ locale === 'de' ? 'Aktionen' : 'Actions' }}</th></tr></thead>
+
+    <table class="data-table compact-table">
+      <thead><tr><th>{{ locale === 'de' ? 'Name' : 'Name' }}</th><th>{{ locale === 'de' ? 'Token (Maskiert)' : 'Token (masked)' }}</th><th>{{ locale === 'de' ? 'Aktionen' : 'Actions' }}</th></tr></thead>
       <tbody>
-        <tr v-for="item in items" :key="item.id">
+        <tr v-for="item in tokens" :key="item.id">
           <td>{{ item.name }}</td>
-          <td><code>/webhook/{{ item.slug }}</code></td>
+          <td><code>{{ item.token_preview }}</code></td>
           <td class="actions">
-            <button class="ghost" @click="editItem(item)">{{ t('edit') }}</button>
-            <button class="danger" @click="remove(item.id)">{{ t('delete') }}</button>
+            <button class="ghost" @click="copyToken(item.id)">{{ locale === 'de' ? 'Kopieren' : 'Copy' }}</button>
+            <button class="danger" @click="removeToken(item.id)">{{ t('delete') }}</button>
           </td>
         </tr>
       </tbody>
     </table>
+
+    <div class="card webhook-help">
+      <h3>{{ locale === 'de' ? 'Aufruf und Authentifizierung' : 'Call and authentication' }}</h3>
+      <p>{{ locale === 'de' ? 'Sende POST-Requests an /webhook. Authentifiziere mit token als Query-Parameter oder als Header X-SignalKiosk-Token.' : 'Send POST requests to /webhook. Authenticate using token query parameter or X-SignalKiosk-Token header.' }}</p>
+      <pre><code>curl -X POST "http://localhost:8080/webhook?token=YOUR_TOKEN" -H "Content-Type: application/json" -d "{\"content_type\":\"webpage\",\"url\":\"https://status.example.org\",\"duration_seconds\":120,\"apply_mode\":\"replace_now\"}"</code></pre>
+
+      <h3>{{ locale === 'de' ? 'Felder im Request' : 'Request fields' }}</h3>
+      <ul>
+        <li><code>content_type</code>: <code>webpage</code>, <code>html</code>, <code>image</code>, <code>video</code></li>
+        <li><code>duration_seconds</code>: Pflichtfeld (1-86400)</li>
+        <li><code>apply_mode</code>: <code>replace_now</code> oder <code>queue_next_once</code></li>
+        <li><code>webpage</code>: braucht <code>url</code></li>
+        <li><code>html</code>: braucht <code>html</code></li>
+        <li><code>image</code>/<code>video</code>: braucht <code>url</code> oder <code>asset_path</code></li>
+      </ul>
+
+      <h3>{{ locale === 'de' ? 'Modi im Playback' : 'Playback modes' }}</h3>
+      <p><code>replace_now</code>: {{ locale === 'de' ? 'ersetzt die aktuell laufende Seite sofort fuer die angegebene Dauer.' : 'replaces the currently running page immediately for the provided duration.' }}</p>
+      <p><code>queue_next_once</code>: {{ locale === 'de' ? 'reiht den Inhalt einmalig als naechsten Inhalt ein. Danach laeuft der normale Plan weiter.' : 'queues the content once as the next item. After that, normal rotation resumes.' }}</p>
+    </div>
   </section>
 </template>
 
@@ -132,12 +167,17 @@ useUnsavedChangesGuard(isDirty, locale)
 .webhook-help {
   display: grid;
   gap: 8px;
-  margin-bottom: 14px;
+  margin-top: 14px;
 }
 
 .webhook-help h3,
 .webhook-help p {
   margin: 0;
+}
+
+.webhook-help ul {
+  margin: 0;
+  padding-left: 18px;
 }
 
 .webhook-help pre {
@@ -147,6 +187,15 @@ useUnsavedChangesGuard(isDirty, locale)
   border: 1px solid #d7e1ea;
   background: #f5f8fb;
   overflow-x: auto;
+}
+
+.webhook-help code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.95em;
+}
+
+.webhook-help pre code {
+  font-size: 14px;
 }
 
 .token-field {

@@ -7,18 +7,20 @@
 ![Language: TypeScript](https://img.shields.io/badge/Language-TypeScript-1f4fa3.svg)
 
 SignalKiosk is a self-hosted kiosk and digital-signage platform for Linux.
-It provides a web-based admin interface for content and scheduling, plus local fullscreen playback in Chromium for reliable single-screen operation.
+It provides a web-based admin interface for content and scheduling, plus local Chromium playback controlled via Chrome DevTools Protocol (CDP).
 
 ## Table of Contents
 
 - [Key Capabilities](#key-capabilities)
 - [Architecture](#architecture)
 - [Quick Start (Ubuntu 22.04/24.04)](#quick-start-ubuntu-22042404)
+- [Fresh Ubuntu Kiosk Setup](#fresh-ubuntu-kiosk-setup)
 - [Configuration](#configuration)
 - [Operations](#operations)
 - [Backup and Restore](#backup-and-restore)
 - [Troubleshooting](#troubleshooting)
 - [Development](#development)
+- [Local CDP Runner (Windows)](#local-cdp-runner-windows)
 - [Security Notes](#security-notes)
 - [License](#license)
 
@@ -26,18 +28,25 @@ It provides a web-based admin interface for content and scheduling, plus local f
 
 - Local-first kiosk operation with server and playback on the same machine
 - Web admin UI for managing playback and system behavior
-- Fullscreen Chromium kiosk mode via `systemd` service
+- Dedicated CDP runner service that launches and controls Chromium
+- Playback is driven by structured commands (`/api/playback/command`), no iframe playback page
 - Containerized runtime with Docker Compose
 - FastAPI backend, Vue 3 + TypeScript frontend
 
 ## Architecture
 
 - `backend/`: FastAPI application, scheduling/playback logic, SQLAlchemy, Alembic, tests
+- `backend/`: FastAPI application, scheduling/playback logic, command API for CDP runner
 - `frontend/`: Vue 3 + TypeScript admin application (Vite)
-- `kiosk/`: Optional container kiosk runtime (Compose profile: `kiosk-container`)
+- `cdp_runner/`: Dedicated CDP runner service (Compose profile: `cdp-runner`)
 - `scripts/`: Installation and operational helper scripts
 
-Default production mode is host-based kiosk startup via `signalkiosk-kiosk.service`.
+### Playback flow (CDP)
+
+1. Backend resolves active content (default/schedule/webhook override).
+2. Backend exposes the current playback command via `GET /api/playback/command`.
+3. CDP runner polls the command endpoint and only navigates when command hash/revision changes.
+4. Runner controls local Chrome via CDP (`Page.navigate`) in kiosk/fullscreen mode.
 
 ## Quick Start (Ubuntu 22.04/24.04)
 
@@ -61,21 +70,28 @@ cd SignalKiosk
 sudo bash scripts/install.sh
 ```
 
+`scripts/install.sh` now delegates to `scripts/setup-ubuntu-kiosk.sh`.
+
+For full host-kiosk setup with local Chromium controlled via CDP (recommended for real fullscreen kiosk), use:
+
+```bash
+sudo bash scripts/setup-ubuntu-kiosk.sh
+```
+
 The installer automatically:
 
 - Installs Docker Engine and Docker Compose plugin (if missing)
 - Installs project to `/opt/SignalKiosk`
 - Creates `.env` from `.env.example`
 - Starts services with `docker compose up -d --build`
-- Creates and enables `signalkiosk-kiosk.service`
-- Starts Chromium in fullscreen kiosk mode on `http://127.0.0.1:<ADMIN_PORT>/playback`
+- Uses CDP-based playback command API for browser control
 
 ### 4) Validate installation
 
 ```bash
 docker ps
 docker compose -f /opt/SignalKiosk/docker-compose.yml ps
-systemctl status signalkiosk-kiosk.service
+docker compose -f /opt/SignalKiosk/docker-compose.yml --profile cdp-runner ps
 ```
 
 Admin UI:
@@ -93,19 +109,55 @@ Primary config file: `/opt/SignalKiosk/.env`
 
 | Variable | Description | Example |
 | --- | --- | --- |
-| `ADMIN_PORT` | Admin and playback web port | `8080` |
+| `ADMIN_PORT` | Admin UI web port | `8080` |
 | `DATABASE_URL` | SQLite database location | `sqlite:////data/localkiosk.db` |
 | `SECRET_ENCRYPTION_KEY` | Secret key (auto-generated if empty) | `` |
-| `KIOSK_MODE` | Kiosk runtime mode | `host` |
-| `KIOSK_URL` | URL opened by kiosk browser | `http://127.0.0.1:8080/playback` |
-| `KIOSK_DISABLE_WEB_SECURITY` | Disable Chromium web security checks (CORS/certs, unsafe) | `false` |
+| `CDP_POLL_INTERVAL_SECONDS` | Runner polling interval for playback commands | `1.5` |
+| `CDP_PORT` | Internal Chrome DevTools port used by runner | `9222` |
+| `CHROME_HEADLESS` | Run browser headless in CDP runner | `false` |
+| `CHROME_ALLOW_INSECURE` | Relax browser security checks (unsafe) | `false` |
+
+For local Windows runner scripts, these parameters are relevant:
+
+- `-AppBaseUrl` (default `http://127.0.0.1:8081`)
+- `-ChromeBin` (auto-detected if omitted)
+- `-CdpPort` (default `9222`)
+- `-PollIntervalSeconds` (default `1.5`)
+- `-ChromeUserDataDir` (default `%LOCALAPPDATA%\SignalKiosk\cdp-chrome-profile`)
 
 Apply config changes:
 
 ```bash
 cd /opt/SignalKiosk
 docker compose up -d
-sudo systemctl restart signalkiosk-kiosk.service
+docker compose --profile cdp-runner up -d cdp-runner
+```
+
+## Fresh Ubuntu Kiosk Setup
+
+Use this on a clean Ubuntu host when you want backend/frontend in Docker but kiosk Chromium on the host.
+
+Run:
+
+```bash
+sudo bash scripts/setup-ubuntu-kiosk.sh
+```
+
+What the script does:
+
+- Installs Docker (if missing), Python, and Chromium
+- Copies project to `/opt/SignalKiosk`
+- Creates `.env` from `.env.example` if needed
+- Starts `app` and `frontend` via Docker Compose
+- Installs `cdp_runner` Python dependencies on host
+- Creates and enables `signalkiosk-cdp-runner.service`
+
+Service operations:
+
+```bash
+sudo systemctl status signalkiosk-cdp-runner.service
+sudo systemctl restart signalkiosk-cdp-runner.service
+sudo journalctl -u signalkiosk-cdp-runner.service -f
 ```
 
 ## Operations
@@ -116,7 +168,7 @@ Runtime logs:
 cd /opt/SignalKiosk
 docker compose logs -f app
 docker compose logs -f frontend
-sudo journalctl -u signalkiosk-kiosk.service -f
+docker compose --profile cdp-runner logs -f cdp-runner
 ```
 
 ## Backup and Restore
@@ -137,9 +189,10 @@ docker compose up -d
 
 ## Troubleshooting
 
-- Black screen on local display: run `xhost +local:` on host and restart kiosk service
+- Browser does not update: inspect `cdp-runner` logs and verify `app` is reachable
+- Browser stays on `about:blank`: check `http://127.0.0.1:8081/api/playback/command` returns `changed: true` on first call and valid `content_type`
+- Too many refreshes/navigations: inspect runner logs with timestamp; command updates now use revision + hash to avoid timer-only reloads
 - API unreachable: inspect backend logs via `docker compose logs -f app`
-- Kiosk not launching: inspect `journalctl -u signalkiosk-kiosk.service -n 200`
 - Port conflict: update `ADMIN_PORT` in `.env` and restart services
 
 ## Development
@@ -163,6 +216,74 @@ cd frontend
 npm install
 npm run dev
 ```
+
+## Local CDP Runner (Windows)
+
+For local development with a visible browser on your Windows machine, use the provided PowerShell scripts.
+
+Start local stack + local CDP runner:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-cdp.ps1
+```
+
+Unified wrapper script (recommended):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\local-cdp.ps1 start
+```
+
+Restart/stop via wrapper:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\local-cdp.ps1 restart
+powershell -ExecutionPolicy Bypass -File .\scripts\local-cdp.ps1 stop
+```
+
+Optional parameters:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-cdp.ps1 -AppBaseUrl "http://127.0.0.1:8081" -ChromeBin "C:\Program Files\Google\Chrome\Application\chrome.exe" -CdpPort "9222" -PollIntervalSeconds "1.5"
+```
+
+Optional: set a dedicated browser profile path so stop can target only runner-owned Chrome:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\local-cdp.ps1 start -ChromeUserDataDir "$env:LOCALAPPDATA\SignalKiosk\cdp-chrome-profile"
+```
+
+Stop local CDP runner and controlled browser:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\stop-local-cdp.ps1
+```
+
+Wrapper equivalent:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\local-cdp.ps1 stop
+```
+
+Stop local CDP runner and also stop Docker services:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\stop-local-cdp.ps1 -StopDocker
+```
+
+Wrapper equivalents:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\local-cdp.ps1 stop -StopDocker
+powershell -ExecutionPolicy Bypass -File .\scripts\local-cdp.ps1 restart
+```
+
+Notes:
+
+- `start-local-cdp.ps1` starts `app` and `frontend` via Docker Compose and runs `cdp_runner/runner.py` locally.
+- The local runner launches Chrome/Chromium on the host using CDP (`--remote-debugging-port`) in kiosk/fullscreen mode.
+- Translate prompts are suppressed by flags and runner-managed Chrome profile preferences.
+- Start script stops an already running local runner before launching a new one (prevents multi-window loops).
+- If your API runs on a different port than `8081`, set `-AppBaseUrl` accordingly.
 
 ## Security Notes
 

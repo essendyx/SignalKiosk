@@ -34,7 +34,7 @@ const submit = async (): Promise<void> => {
     <form class="login-card" @submit.prevent="submit">
       <p class="eyebrow">SignalKiosk</p>
       <h1>{{ locale === 'de' ? 'Admin-Anmeldung' : 'Admin Sign In' }}</h1>
-      <p class="subtitle">{{ locale === 'de' ? 'Bitte melden Sie sich an, um Inhalte und Zeitplaene zu verwalten.' : 'Sign in to manage content and schedules.' }}</p>
+      <p class="subtitle">{{ locale === 'de' ? 'Bitte melden Sie sich an, um Inhalte und Zeitpläne zu verwalten.' : 'Sign in to manage content and schedules.' }}</p>
       <label>
         <span>{{ locale === 'de' ? 'Benutzername' : 'Username' }}</span>
         <input v-model="username" autocomplete="username" :placeholder="locale === 'de' ? 'Benutzername' : 'Username'" />
@@ -65,3 +65,4 @@ button:disabled { opacity: 0.7; cursor: default; }
 .error { margin: 0; color: #9f1f1f; font-weight: 600; }
 @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 </style>
+

@@ -3,7 +3,7 @@ import { onBeforeRouteLeave } from "vue-router"
 
 export const confirmDiscardChanges = (locale: Ref<string>): boolean => {
   const message = locale.value === "de"
-    ? "Sie haben ungespeicherte Aenderungen. Wirklich verwerfen und Seite verlassen?"
+    ? "Sie haben ungespeicherte Änderungen. Wirklich verwerfen und Seite verlassen?"
     : "You have unsaved changes. Discard and leave this page?"
   return window.confirm(message)
 }

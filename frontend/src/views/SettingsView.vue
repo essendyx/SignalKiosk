@@ -39,7 +39,7 @@ const create = async (): Promise<void> => {
     await load()
     showToast(locale.value === "de" ? "Einstellung gespeichert." : "Setting saved.")
   } catch {
-    error.value = "JSON-Format ungueltig. Beispiel: {\"value\":\"text\"}"
+    error.value = "JSON-Format ungültig. Beispiel: {\"value\":\"text\"}"
     showToast(locale.value === "de" ? "Speichern fehlgeschlagen." : "Save failed.", "error")
   }
 }
@@ -51,10 +51,10 @@ useUnsavedChangesGuard(isDirty, locale)
 <template>
   <section class="page">
     <h2 class="page-title">{{ locale === 'de' ? 'Einstellungen' : 'Settings' }}</h2>
-    <p class="page-subtitle">{{ locale === 'de' ? 'Zentrale Systemwerte fuer Integrationen und Laufzeitverhalten.' : 'Central system values for integrations and runtime behavior.' }}</p>
+    <p class="page-subtitle">{{ locale === 'de' ? 'Zentrale Systemwerte für Integrationen und Laufzeitverhalten.' : 'Central system values for integrations and runtime behavior.' }}</p>
     <div class="card">
       <h3>{{ locale === 'de' ? 'Neue Einstellung' : 'New setting' }}</h3>
-      <label>{{ locale === 'de' ? 'Schluessel (z. B. kiosk.refresh_interval)' : 'Key (e.g. kiosk.refresh_interval)' }}<input v-model="newKey" placeholder="kiosk.refresh_interval" /></label>
+      <label>{{ locale === 'de' ? 'Schlüssel (z. B. kiosk.refresh_interval)' : 'Key (e.g. kiosk.refresh_interval)' }}<input v-model="newKey" placeholder="kiosk.refresh_interval" /></label>
       <label>{{ locale === 'de' ? 'Wert als JSON' : 'Value as JSON' }}<textarea v-model="newValue" rows="3"></textarea></label>
       <button @click="create">{{ t('save') }}</button>
       <p v-if="error" class="error">{{ error }}</p>
@@ -76,3 +76,4 @@ useUnsavedChangesGuard(isDirty, locale)
     </div>
   </section>
 </template>
+

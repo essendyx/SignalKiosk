@@ -43,24 +43,25 @@ const createName = ref("")
 const createDescription = ref("")
 const createIsDefault = ref(false)
 const dirtyItemIds = ref<string[]>([])
+const suppressPresetSwitchGuard = ref(false)
 const { locale, t } = useI18n()
 
 const text = computed(() => locale.value === "de" ? {
   title: "Presets",
-  subtitle: "Waehlen Sie ein Preset zur Bearbeitung oder erstellen Sie ein neues Preset ueber den Hauptbutton.",
+  subtitle: "Wählen Sie ein Preset zur Bearbeitung oder erstellen Sie ein neues Preset über den Hauptbutton.",
   newPreset: "+ Neues Preset",
   currentPreset: "Aktuelles Preset",
   setDefault: "Als Standard setzen",
-  deletePreset: "Preset loeschen",
-  defaultHint: "Dieses Preset ist aktuell als Standard markiert und laeuft ausserhalb von Zeitplaenen.",
+  deletePreset: "Preset löschen",
+  defaultHint: "Dieses Preset ist aktuell als Standard markiert und läuft außerhalb von Zeitplänen.",
   noneTitle: "Noch kein Preset vorhanden",
-  noneText: "Erstellen Sie zuerst ein Preset ueber + Neues Preset, bevor Sie Inhalte zuordnen koennen.",
+  noneText: "Erstellen Sie zuerst ein Preset über + Neues Preset, bevor Sie Inhalte zuordnen können.",
   presetContent: "Inhalte im Preset",
   content: "Inhalt",
   duration: "Dauer (Sekunden)",
   durationReq: "Pflicht ab 2 Inhalten",
   durationOpt: "Bei einem Inhalt optional",
-  addContent: "Inhalt hinzufuegen",
+  addContent: "Inhalt hinzufügen",
   rule: "Regel: Bei genau einem Inhalt kann die Dauer leer bleiben (endlos). Ab zwei Inhalten ist die Dauer pro Inhalt verpflichtend.",
   drag: "Sortierung per Drag-and-Drop. Dauer und Inhalt pro Zeile sind direkt editierbar.",
   colContent: "Inhalt",
@@ -76,9 +77,9 @@ const text = computed(() => locale.value === "de" ? {
   no: "Nein",
   yes: "Ja",
   createPreset: "Preset erstellen",
-  deleteTitle: "Preset loeschen?",
-  deleteText: "Dieses Preset und alle zugeordneten Eintraege werden entfernt. Dieser Vorgang kann nicht rueckgaengig gemacht werden.",
-  deleteFinal: "Endgueltig loeschen"
+  deleteTitle: "Preset löschen?",
+  deleteText: "Dieses Preset und alle zugeordneten Einträge werden entfernt. Dieser Vorgang kann nicht rückgängig gemacht werden.",
+  deleteFinal: "Endgültig löschen"
 } : {
   title: "Presets",
   subtitle: "Select a preset to edit or create a new one using the primary action.",
@@ -196,9 +197,9 @@ const deleteSelectedPreset = async (): Promise<void> => {
     closeDeleteModal()
     selectedPresetId.value = ""
     await load()
-    showToast(locale.value === "de" ? "Preset geloescht." : "Preset deleted.")
+    showToast(locale.value === "de" ? "Preset gelöscht." : "Preset deleted.")
   } catch (err: any) {
-    error.value = err?.response?.data?.detail || "Preset konnte nicht geloescht werden"
+    error.value = err?.response?.data?.detail || "Preset konnte nicht gelöscht werden"
   }
 }
 
@@ -238,9 +239,9 @@ const addItem = async (): Promise<void> => {
     })
     newDuration.value = null
     await loadPresetItems()
-    showToast(locale.value === "de" ? "Inhalt hinzugefuegt." : "Content added.")
+    showToast(locale.value === "de" ? "Inhalt hinzugefügt." : "Content added.")
   } catch (err: any) {
-    error.value = err?.response?.data?.detail || "Inhalt konnte nicht hinzugefuegt werden"
+    error.value = err?.response?.data?.detail || "Inhalt konnte nicht hinzugefügt werden"
   }
 }
 
@@ -279,9 +280,9 @@ const saveDirtyItems = async (): Promise<void> => {
       }))
     )
     dirtyItemIds.value = []
-    showToast(locale.value === "de" ? "Aenderungen gespeichert." : "Changes saved.")
+    showToast(locale.value === "de" ? "Änderungen gespeichert." : "Changes saved.")
   } catch (err: any) {
-    error.value = err?.response?.data?.detail || "Aenderungen konnten nicht gespeichert werden"
+    error.value = err?.response?.data?.detail || "Änderungen konnten nicht gespeichert werden"
     showToast(locale.value === "de" ? "Speichern fehlgeschlagen." : "Save failed.", "error")
     await loadPresetItems()
   }
@@ -327,7 +328,17 @@ const onEsc = (event: KeyboardEvent): void => {
   if (showCreateModal.value) closeCreateModal()
 }
 
-watch(selectedPresetId, async () => {
+watch(selectedPresetId, async (nextId, prevId) => {
+  if (suppressPresetSwitchGuard.value) {
+    suppressPresetSwitchGuard.value = false
+    return
+  }
+  if (nextId !== prevId && dirtyItemIds.value.length > 0 && !confirmDiscardChanges(locale)) {
+    suppressPresetSwitchGuard.value = true
+    selectedPresetId.value = prevId
+    return
+  }
+  dirtyItemIds.value = []
   await loadPresetItems()
 })
 
@@ -429,7 +440,7 @@ useUnsavedChangesGuard(isDirty, locale)
     <p v-if="error" class="error">{{ error }}</p>
 
     <div v-if="showCreateModal" class="modal-backdrop" @click.self="closeCreateModal">
-      <div class="modal-card" role="dialog" aria-modal="true" aria-label="Neues Preset erstellen">
+      <div class="modal-card" role="dialog" aria-modal="true" :aria-label="locale === 'de' ? 'Neues Preset erstellen' : 'Create new preset'">
         <h3>{{ text.createTitle }}</h3>
         <label>{{ text.presetName }}<input v-model="createName" placeholder="z. B. Tagesbetrieb" /></label>
         <label>{{ text.description }}<input v-model="createDescription" :placeholder="text.optional" /></label>
@@ -447,7 +458,7 @@ useUnsavedChangesGuard(isDirty, locale)
     </div>
 
     <div v-if="showDeleteModal" class="modal-backdrop" @click.self="closeDeleteModal">
-      <div class="modal-card" role="dialog" aria-modal="true" aria-label="Preset loeschen bestaetigen">
+      <div class="modal-card" role="dialog" aria-modal="true" :aria-label="locale === 'de' ? 'Preset löschen bestätigen' : 'Confirm preset deletion'">
         <h3>{{ text.deleteTitle }}</h3>
         <p>{{ text.deleteText }}</p>
         <div class="modal-actions">
@@ -507,3 +518,4 @@ useUnsavedChangesGuard(isDirty, locale)
   .add-preset-btn { width: 100%; }
 }
 </style>
+

@@ -6,7 +6,7 @@ export default defineConfig({
   server: {
     proxy: {
       "/api": { target: "http://app:8000", changeOrigin: true },
-      "/webhook": { target: "http://app:8000", changeOrigin: true }
+      "^/webhook$": { target: "http://app:8000", changeOrigin: true }
     }
   }
 })

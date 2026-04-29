@@ -11,7 +11,7 @@ const messages = {
     navSchedules: "Zeitplaene",
     navWebhooks: "Webhooks",
     navSettings: "Einstellungen",
-    navPlayback: "Playback in neuem Tab",
+    navPlayback: "CDP-Runner Status",
     logout: "Abmelden",
     language: "Sprache",
     german: "Deutsch",
@@ -32,7 +32,7 @@ const messages = {
     navSchedules: "Schedules",
     navWebhooks: "Webhooks",
     navSettings: "Settings",
-    navPlayback: "Open Playback",
+    navPlayback: "CDP Runner Status",
     logout: "Log out",
     language: "Language",
     german: "German",
@@ -51,12 +51,16 @@ const stored = localStorage.getItem("locale")
 const initial: Locale = stored === "en" || stored === "de" ? stored : "de"
 export const locale = ref<Locale>(initial)
 
-export const setLocale = (value: Locale): void => {
+export const applyLocale = (value: Locale): void => {
   locale.value = value
+}
+
+export const setLocale = (value: Locale): void => {
+  applyLocale(value)
   localStorage.setItem("locale", value)
 }
 
 export const useI18n = () => {
   const t = (key: keyof typeof messages.de): string => messages[locale.value][key]
-  return { locale, setLocale, t }
+  return { locale, applyLocale, setLocale, t }
 }

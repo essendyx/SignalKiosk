@@ -14,7 +14,6 @@ services:
       - uploads_data:/uploads
       - logs_data:/logs
       - config_data:/config
-      - browser_profiles:/browser_profiles
     ports:
       - "${PLAYBACK_PORT:-8090}:8000"
     healthcheck:
@@ -44,26 +43,22 @@ services:
       retries: 5
     restart: unless-stopped
 
-  kiosk:
+  cdp-runner:
     build:
-      context: ./kiosk
+      context: ./cdp_runner
       dockerfile: Dockerfile
-    env_file:
-      - .env
     environment:
-      - DISPLAY=${KIOSK_DISPLAY:-:0}
-      - KIOSK_URL=${KIOSK_URL:-http://app:8000/playback}
-      - ENABLE_REMOTE_DEBUGGING=${ENABLE_REMOTE_DEBUGGING:-false}
-      - KIOSK_DISABLE_WEB_SECURITY=${KIOSK_DISABLE_WEB_SECURITY:-false}
+      - APP_BASE_URL=http://app:8000
+      - PLAYBACK_COMMAND_ENDPOINT=/api/playback/command
+      - POLL_INTERVAL_SECONDS=${CDP_POLL_INTERVAL_SECONDS:-1.5}
+      - CDP_PORT=${CDP_PORT:-9222}
+      - CHROME_HEADLESS=${CHROME_HEADLESS:-false}
+      - CHROME_ALLOW_INSECURE=${CHROME_ALLOW_INSECURE:-false}
     depends_on:
       app:
         condition: service_healthy
     profiles:
-      - kiosk-container
-    volumes:
-      - /tmp/.X11-unix:/tmp/.X11-unix
-      - browser_profiles:/home/kiosk/.config/chromium
-      - logs_data:/logs
+      - cdp-runner
     restart: unless-stopped
 
 volumes:
@@ -71,5 +66,4 @@ volumes:
   uploads_data:
   logs_data:
   config_data:
-  browser_profiles:
   frontend_node_modules:
