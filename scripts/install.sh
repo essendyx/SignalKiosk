@@ -5,9 +5,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TARGET_SCRIPT="${SCRIPT_DIR}/setup-ubuntu-kiosk.sh"
 
 if [[ ! -f "${TARGET_SCRIPT}" ]]; then
-  echo "Fehler: ${TARGET_SCRIPT} nicht gefunden"
+  echo "Error: ${TARGET_SCRIPT} not found"
   exit 1
 fi
 
-echo "Hinweis: scripts/install.sh delegiert jetzt auf scripts/setup-ubuntu-kiosk.sh"
+echo "Info: scripts/install.sh now delegates to scripts/setup-ubuntu-kiosk.sh"
 exec bash "${TARGET_SCRIPT}"

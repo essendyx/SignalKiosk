@@ -319,9 +319,9 @@ PY
 
 select_install_mode() {
   local choice=""
-  printf "\nInstall mode:\n"
-  printf "  1) Release tag (recommended)\n"
-  printf "  2) Local working copy\n"
+  printf "\nInstall mode:\n" >&2
+  printf "  1) Release tag (recommended)\n" >&2
+  printf "  2) Local working copy\n" >&2
 
   while true; do
     read -r -p "Choose mode [1]: " choice
@@ -341,7 +341,7 @@ select_tag() {
   local tag=""
   local selection=""
 
-  info "Fetching tags from ${repo_url}..."
+  info "Fetching tags from ${repo_url}..." >&2
   while IFS= read -r line; do
     tag="${line##refs/tags/}"
     tag="${tag%%^{}*}"
@@ -353,15 +353,15 @@ select_tag() {
   IFS=$'\n' tags=($(printf "%s\n" "${tags[@]}" | sort -Vr))
   unset IFS
 
-  printf "\nAvailable tags (latest first):\n"
+  printf "\nAvailable tags (latest first):\n" >&2
   local max_show=30
   local count=${#tags[@]}
   local i
   for ((i=0; i < count && i < max_show; i++)); do
-    printf "  %2d) %s\n" "$((i+1))" "${tags[$i]}"
+    printf "  %2d) %s\n" "$((i+1))" "${tags[$i]}" >&2
   done
   if (( count > max_show )); then
-    printf "  ... (%d more tags not shown)\n" "$((count - max_show))"
+    printf "  ... (%d more tags not shown)\n" "$((count - max_show))" >&2
   fi
 
   while true; do

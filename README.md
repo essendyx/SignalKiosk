@@ -94,7 +94,7 @@ sudo reboot
 sudo bash /opt/SignalKiosk/scripts/post-reboot-verify.sh
 ```
 
-Open admin UI: `http://<server-ip>:8080` (or your `ADMIN_PORT`).
+Open the Admin UI using one of the URLs printed by the installer at the end (for example `http://<device-ip>:8080`, or your configured `ADMIN_PORT`).
 
 ## Configuration
 
