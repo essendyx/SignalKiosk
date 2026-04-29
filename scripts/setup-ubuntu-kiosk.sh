@@ -52,12 +52,16 @@ install_chromium() {
 
   if command -v chromium >/dev/null 2>&1; then
     command -v chromium
-  elif command -v chromium-browser >/dev/null 2>&1; then
-    command -v chromium-browser
-  else
-    echo "Chromium binary not found after installation"
-    exit 1
+    return
   fi
+
+  if command -v chromium-browser >/dev/null 2>&1; then
+    command -v chromium-browser
+    return
+  fi
+
+  echo "Chromium binary not found after installation"
+  exit 1
 }
 
 echo "[1/8] Installing host dependencies"
