@@ -67,9 +67,17 @@ sudo apt -y install git
 ### 2) Clone repository
 
 ```bash
+# Recommended: clone outside /opt. The installer copies the project to /opt/SignalKiosk itself.
+cd ~
 git clone https://github.com/essendyx/SignalKiosk.git
 cd SignalKiosk
 ```
+
+If you already cloned to `/opt/SignalKiosk` and run `scripts/install.sh` from there, step `[3/8] Copying project to /opt/SignalKiosk` can fail with:
+
+`cp: '.' and '/opt/SignalKiosk/.' are the same file`
+
+In that case, clone again to a different source directory (for example `~/SignalKiosk`) and rerun the installer from that directory.
 
 ### 3) Run installer
 
