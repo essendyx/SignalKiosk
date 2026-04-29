@@ -27,6 +27,31 @@ const controlStatus = ref<ControlStatus | null>(null)
 const controlBusy = ref(false)
 const importReplaceExisting = ref(false)
 const importFileInput = ref<HTMLInputElement | null>(null)
+const allConfigSections = ["settings", "contents", "presets", "preset_items", "schedules", "auth_profiles", "users"] as const
+const exportSections = ref<string[]>([...allConfigSections])
+const importSections = ref<string[]>([...allConfigSections])
+
+const sectionLabel = (value: string): string => {
+  const mapDe: Record<string, string> = {
+    settings: "Settings",
+    contents: "Inhalte",
+    presets: "Presets",
+    preset_items: "Preset-Items",
+    schedules: "Zeitplaene",
+    auth_profiles: "Auth-Profile",
+    users: "Benutzer"
+  }
+  const mapEn: Record<string, string> = {
+    settings: "Settings",
+    contents: "Contents",
+    presets: "Presets",
+    preset_items: "Preset items",
+    schedules: "Schedules",
+    auth_profiles: "Auth profiles",
+    users: "Users"
+  }
+  return locale.value === "de" ? (mapDe[value] || value) : (mapEn[value] || value)
+}
 
 const load = async (): Promise<void> => {
   const [settingsRes, statusRes] = await Promise.all([
@@ -76,7 +101,8 @@ const restartAll = async (): Promise<void> => runControl(
 
 const exportConfig = async (): Promise<void> => {
   try {
-    const res = await api.get("/system/config/export")
+    const sections = exportSections.value.join(",")
+    const res = await api.get("/system/config/export", { params: { sections } })
     const blob = new Blob([JSON.stringify(res.data, null, 2)], { type: "application/json" })
     const url = URL.createObjectURL(blob)
     const stamp = new Date().toISOString().replace(/[:.]/g, "-")
@@ -112,10 +138,11 @@ const importConfig = async (event: Event): Promise<void> => {
     }
 
     const text = await file.text()
-    const payload = JSON.parse(text) as { settings?: Record<string, Record<string, unknown>> }
-    if (!payload.settings || typeof payload.settings !== "object") throw new Error("invalid")
+    const payload = JSON.parse(text) as { sections?: Record<string, unknown> }
+    if (!payload.sections || typeof payload.sections !== "object") throw new Error("invalid")
     const res = await api.post("/system/config/import", {
-      settings: payload.settings,
+      sections: payload.sections,
+      selected_sections: importSections.value,
       replace_existing: importReplaceExisting.value
     })
     const data = res.data as { imported?: number; skipped?: number }
@@ -181,6 +208,18 @@ useUnsavedChangesGuard(isDirty, locale)
     <div class="card">
       <h3>{{ locale === 'de' ? 'Konfiguration Export/Import' : 'Configuration export/import' }}</h3>
       <p class="hint">{{ locale === 'de' ? 'Exportiert und importiert System-Settings als JSON-Datei.' : 'Exports and imports system settings as a JSON file.' }}</p>
+      <div class="section-grid">
+        <label v-for="entry in allConfigSections" :key="`export-${entry}`" class="checkbox-row">
+          <input type="checkbox" :value="entry" v-model="exportSections" />
+          <span>{{ sectionLabel(entry) }} ({{ locale === 'de' ? 'Export' : 'export' }})</span>
+        </label>
+      </div>
+      <div class="section-grid">
+        <label v-for="entry in allConfigSections" :key="`import-${entry}`" class="checkbox-row">
+          <input type="checkbox" :value="entry" v-model="importSections" />
+          <span>{{ sectionLabel(entry) }} ({{ locale === 'de' ? 'Import' : 'import' }})</span>
+        </label>
+      </div>
       <div class="import-grid">
         <label class="checkbox-row">
           <input type="checkbox" v-model="importReplaceExisting" />
@@ -243,6 +282,13 @@ useUnsavedChangesGuard(isDirty, locale)
 .import-grid {
   display: flex;
   justify-content: flex-start;
+}
+
+.section-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 8px 0;
 }
 </style>
 
