@@ -106,7 +106,9 @@ configure_desktop_autologin() {
   local user="$1"
   log "DESKTOP" "Installing desktop packages and enabling autologin"
   apt-get update
-  apt-get install -y xfce4 xfce4-goodies lightdm
+  echo "lightdm shared/default-x-display-manager select lightdm" | debconf-set-selections
+  DEBIAN_FRONTEND=noninteractive apt-get install -y xfce4 xfce4-goodies lightdm
+  dpkg-reconfigure -f noninteractive lightdm || true
   systemctl set-default graphical.target
   systemctl enable lightdm
   mkdir -p /etc/lightdm/lightdm.conf.d
