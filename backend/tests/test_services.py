@@ -44,3 +44,23 @@ def test_rotation_picks_content():
     db.commit()
     state = advance_rotation(db, datetime.now(timezone.utc))
     assert state.active_content_id == c.id
+
+
+def test_rotation_skips_deleted_content_from_preset_item():
+    db = setup_db()
+    c1 = Content(name="First", type="webpage", config_json='{"url":"https://example.org/1"}', default_duration_seconds=10)
+    c2 = Content(name="Second", type="webpage", config_json='{"url":"https://example.org/2"}', default_duration_seconds=10)
+    p = Preset(name="P", is_default=True)
+    db.add_all([c1, c2, p])
+    db.commit()
+
+    db.add(PresetItem(preset_id=p.id, content_id=c1.id, position=0, duration_seconds=10, enabled=True))
+    db.add(PresetItem(preset_id=p.id, content_id=c2.id, position=1, duration_seconds=10, enabled=True))
+    db.commit()
+
+    db.query(PresetItem).filter(PresetItem.content_id == c1.id).delete(synchronize_session=False)
+    db.delete(c1)
+    db.commit()
+
+    state = advance_rotation(db, datetime.now(timezone.utc))
+    assert state.active_content_id == c2.id

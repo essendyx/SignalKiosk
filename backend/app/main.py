@@ -386,6 +386,7 @@ def delete_content(content_id: str, db: Session = Depends(get_db), user: User = 
     obj = db.get(Content, content_id)
     if not obj:
         raise HTTPException(status_code=404, detail="Not found")
+    db.query(PresetItem).filter(PresetItem.content_id == content_id).delete(synchronize_session=False)
     db.delete(obj)
     _mark_playback_dirty(db)
     db.add(AuditLog(actor_type="user", actor_id=user.id, action="delete", entity_type="content", entity_id=content_id, metadata_json="{}"))
