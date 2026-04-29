@@ -61,15 +61,7 @@ It provides a web-based admin interface for content and scheduling, plus local C
 If you want one single, repeatable setup path (fresh Ubuntu + kiosk + autologin + fullscreen playback), follow only this section.
 You can ignore the other install sections.
 
-### 1) Create kiosk user
-
-```bash
-sudo adduser signalkiosk
-sudo usermod -aG sudo signalkiosk
-su - signalkiosk
-```
-
-### 2) Install and run SignalKiosk setup
+### 1) Run the interactive installer (recommended)
 
 ```bash
 sudo apt update && sudo apt -y upgrade
@@ -77,202 +69,35 @@ sudo apt -y install git
 cd ~
 git clone https://github.com/essendyx/SignalKiosk.git SignalKiosk-src
 cd SignalKiosk-src
-sudo bash scripts/setup-ubuntu-kiosk.sh
+sudo bash scripts/install-interactive.sh
 ```
 
-### 3) Edit active config
+The installer guides you through:
 
-Generate a valid Fernet key for `SECRET_ENCRYPTION_KEY`:
+- kiosk Linux username
+- release tag selection (list of available tags)
+- admin and playback ports
+- timezone and default admin credentials
+- automatic generation of `SECRET_ENCRYPTION_KEY`, `HOST_CONTROL_TOKEN`, and `APP_SECRET_KEY`
 
-```bash
-python3 - <<'PY'
-from cryptography.fernet import Fernet
-print(Fernet.generate_key().decode())
-PY
-```
+### 2) Reboot and verify
 
-Copy the output and set it in `/opt/SignalKiosk/.env` as `SECRET_ENCRYPTION_KEY=<generated-key>`.
+The interactive installer already configures all of the following automatically:
 
-```bash
-sudo nano /opt/SignalKiosk/.env
-cd /opt/SignalKiosk
-sudo docker compose up -d
-sudo systemctl restart signalkiosk-cdp-runner.service signalkiosk-host-control.service
-```
+- desktop packages + LightDM autologin
+- kiosk hardening (no blank screen)
+- auto-suspend/power-off disable
+- runner user/systemd overrides for the selected kiosk user
 
-### 4) Install desktop and enable autologin
-
-```bash
-sudo apt update
-sudo apt -y install xfce4 xfce4-goodies lightdm
-sudo systemctl set-default graphical.target
-sudo systemctl enable lightdm
-sudo mkdir -p /etc/lightdm/lightdm.conf.d
-sudo bash -c 'cat >/etc/lightdm/lightdm.conf.d/50-signalkiosk-autologin.conf <<EOF
-[Seat:*]
-autologin-user=signalkiosk
-autologin-user-timeout=0
-user-session=xfce
-EOF'
-```
-
-### 5) Kiosk hardening (no blank screen)
-
-```bash
-sudo tee /etc/xdg/autostart/signalkiosk-display-power.desktop >/dev/null <<'EOF'
-[Desktop Entry]
-Type=Application
-Name=SignalKiosk Display Power
-Exec=sh -c "xset s off -dpms s noblank"
-X-GNOME-Autostart-enabled=true
-NoDisplay=true
-EOF
-```
-
-### 6) Reboot and verify
+After installation, reboot and run the generated verify script:
 
 ```bash
 sudo reboot
-```
-
-After reboot:
-
-```bash
-echo $DISPLAY
-systemctl is-active signalkiosk-cdp-runner.service
-journalctl -u signalkiosk-cdp-runner.service -n 50 --no-pager
+sudo bash /opt/SignalKiosk/scripts/post-reboot-verify.sh
 ```
 
 Open admin UI: `http://<server-ip>:8080` (or your `ADMIN_PORT`).
 Do not use a fixed `/playback` URL for kiosk output; the runner navigates dynamically from `GET /api/playback/command`.
-
-### 7) Ensure runner uses logged-in desktop user (important)
-
-Set the runner service to the kiosk user and the correct runtime dir:
-
-```bash
-id -u signalkiosk
-sudo systemctl edit signalkiosk-cdp-runner.service
-```
-
-Insert:
-
-```ini
-[Service]
-User=signalkiosk
-Group=signalkiosk
-Environment=DISPLAY=:0
-Environment=XDG_RUNTIME_DIR=/run/user/1000
-Environment=XAUTHORITY=/home/signalkiosk/.Xauthority
-ExecStart=
-ExecStart=/usr/bin/python3 /opt/SignalKiosk/cdp_runner/runner.py
-```
-
-Replace `1000` with the UID from `id -u signalkiosk` if different. Then apply:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl restart signalkiosk-cdp-runner.service
-```
-
-Fix Chrome profile permissions for that user:
-
-```bash
-sudo mkdir -p /var/lib/signalkiosk/chrome-profile
-sudo chown -R signalkiosk:signalkiosk /var/lib/signalkiosk
-sudo chmod -R u+rwX /var/lib/signalkiosk
-sudo systemctl restart signalkiosk-cdp-runner.service
-```
-
-### 8) Disable auto-suspend, power-off, and logout behavior
-
-On kiosk systems, disable sleep/suspend at OS and desktop level.
-
-```bash
-sudo mkdir -p /etc/systemd/logind.conf.d
-sudo tee /etc/systemd/logind.conf.d/50-signalkiosk.conf >/dev/null <<'EOF'
-[Login]
-HandleLidSwitch=ignore
-HandleLidSwitchExternalPower=ignore
-HandleLidSwitchDocked=ignore
-IdleAction=ignore
-IdleActionSec=0
-EOF
-sudo systemctl restart systemd-logind
-```
-
-```bash
-sudo mkdir -p /etc/systemd/sleep.conf.d
-sudo tee /etc/systemd/sleep.conf.d/50-signalkiosk.conf >/dev/null <<'EOF'
-[Sleep]
-AllowSuspend=no
-AllowHibernation=no
-AllowHybridSleep=no
-AllowSuspendThenHibernate=no
-EOF
-```
-
-```bash
-sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
-```
-
-```bash
-xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/power-button-action -n -t int -s 0
-xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/sleep-button-action -n -t int -s 0
-xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/hibernate-button-action -n -t int -s 0
-xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/inactivity-on-ac -n -t int -s 14
-xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/dpms-enabled -n -t bool -s false
-```
-
-Disable screen locker packages/services if present:
-
-```bash
-sudo systemctl disable --now light-locker 2>/dev/null || true
-sudo apt -y purge light-locker xscreensaver* || true
-```
-
-Create a per-login autostart guard so XFCE cannot re-enable sleep/DPMS after updates:
-
-```bash
-mkdir -p ~/.config/autostart
-cat > ~/.config/autostart/signalkiosk-nosleep.desktop <<'EOF'
-[Desktop Entry]
-Type=Application
-Name=SignalKiosk NoSleep
-Exec=sh -c "xset s off -dpms s noblank; xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/dpms-enabled -n -t bool -s false; xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/blank-on-ac -n -t int -s 0; xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/inactivity-on-ac -n -t int -s 14"
-X-GNOME-Autostart-enabled=true
-EOF
-```
-
-Reboot after applying:
-
-```bash
-sudo reboot
-```
-
-Verify sleep targets are masked:
-
-```bash
-systemctl status sleep.target suspend.target hibernate.target hybrid-sleep.target --no-pager
-```
-
-Verify DPMS/screensaver state:
-
-```bash
-xset q | grep -E "DPMS is|timeout:"
-```
-
-Run the `xset` check in a local GUI terminal on the TV/monitor session.
-If you run it via SSH, use:
-
-```bash
-DISPLAY=:0 xset q | grep -E "DPMS is|timeout:"
-```
-
-Expected result in GUI session:
-
-- `DPMS is Disabled`
-- `DISPLAY` usually `:0` or `:0.0`
 
 ## Configuration
 
@@ -387,12 +212,12 @@ sudo bash scripts/import-full-snapshot.sh /opt/signal-backups/snapshot-20260429
 
 - Browser does not update: inspect `cdp-runner` logs and verify `app` is reachable
 - TV shows only text console/no browser: install desktop + display manager, enable autologin, and boot into `graphical.target`
-- System logs out or powers down after idle: apply step `8) Disable auto-suspend, power-off, and logout behavior`
-- Screen turns black after idle: repeat step `5) Kiosk hardening (no blank screen)` from `Recommended One-Path Install`
+- System logs out or powers down after idle: re-run `sudo bash scripts/install-interactive.sh` and ensure power hardening is applied
+- Screen turns black after idle: re-run `sudo bash scripts/install-interactive.sh` and then reboot
 - Manual browser test opens UI but not kiosk content: this is expected; `:8080` is admin UI and runner navigates dynamically from `GET /api/playback/command`
 - Browser shows `{"detail":"Not Found"}` on `/playback` via `:8081`: expected, because `:8081` is backend API only
-- `cdp-runner` logs show `Permission denied ... /var/lib/signalkiosk/chrome-profile/First Run`: fix owner/permissions with the commands in step `7`
-- `cdp-runner` logs show repeated `CDP page target not available`: usually no active GUI session or service running as wrong user; apply step `7` and verify autologin/desktop session
+- `cdp-runner` logs show `Permission denied ... /var/lib/signalkiosk/chrome-profile/First Run`: fix ownership with `sudo chown -R <kiosk-user>:<kiosk-user> /var/lib/signalkiosk`
+- `cdp-runner` logs show repeated `CDP page target not available`: usually no active GUI session or service running as wrong user; verify autologin, then run `sudo bash /opt/SignalKiosk/scripts/post-reboot-verify.sh`
 - System still enters sleep: run `journalctl -b --no-pager | grep -Ei "suspend|hibernate|sleep|logind|power"` to identify what triggered it
 - Restart buttons in Settings are disabled/failing: verify `HOST_CONTROL_TOKEN` in `.env` and host service `signalkiosk-host-control.service`
 - Browser stays on `about:blank`: check `http://127.0.0.1:8081/api/playback/command` returns `changed: true` on first call and valid `content_type`
@@ -420,6 +245,12 @@ Frontend local workflow:
 cd frontend
 npm install
 npm run dev
+```
+
+Interactive installer (Ubuntu, guided):
+
+```bash
+sudo bash scripts/install-interactive.sh
 ```
 
 ## Releases
