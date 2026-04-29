@@ -347,7 +347,7 @@ select_tag() {
     ref="$(printf "%s" "${line}" | awk '{print $2}')"
     [[ -n "${ref}" ]] || continue
     tag="${ref##refs/tags/}"
-    tag="${tag%%^{}*}"
+    tag="${tag%%^*}"
     [[ -n "${tag}" ]] && tags+=("${tag}")
   done < <(git ls-remote --tags --refs "${repo_url}")
 
