@@ -15,8 +15,15 @@ const clearTimer = (): void => {
 }
 
 export const showToast = (text: string, toastType: ToastType = "success", timeout = 2800): void => {
+  const normalized = String(text ?? "").trim()
+  if (!normalized) {
+    clearTimer()
+    visible.value = false
+    message.value = ""
+    return
+  }
   clearTimer()
-  message.value = text
+  message.value = normalized
   type.value = toastType
   visible.value = true
   timer = window.setTimeout(() => {
