@@ -145,11 +145,12 @@ def _payload_to_url(command: dict) -> str:
     if content_type == "html":
         return _to_data_url(str(command.get("html") or ""))
     if content_type == "image":
-        src = _absolute_url(str(command.get("asset_path") or ""))
-        markup = f"<html><body style='margin:0;background:#000;display:grid;place-items:center;height:100vh'><img src='{src}' style='max-width:100vw;max-height:100vh;object-fit:contain'></body></html>"
-        return _to_data_url(markup)
+        src_raw = str(command.get("asset_path") or command.get("url") or "")
+        src = _absolute_url(src_raw)
+        return src or "about:blank"
     if content_type == "video":
-        src = _absolute_url(str(command.get("asset_path") or ""))
+        src_raw = str(command.get("asset_path") or command.get("url") or "")
+        src = _absolute_url(src_raw)
         markup = f"<html><body style='margin:0;background:#000;display:grid;place-items:center;height:100vh'><video src='{src}' autoplay muted controls style='width:100vw;height:100vh;object-fit:contain'></video></body></html>"
         return _to_data_url(markup)
     return _to_data_url("<html><body style='margin:0;background:#000;color:#fff;font-family:sans-serif;display:grid;place-items:center;height:100vh'>Kein aktiver Inhalt</body></html>")

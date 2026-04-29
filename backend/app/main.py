@@ -1000,11 +1000,11 @@ def _resolve_playback_command(db: Session) -> dict[str, object]:
             return base
         if content_type == "image":
             src = str(payload.get("asset_path") or payload.get("url") or "")
-            base.update({"content_type": "image", "asset_path": src})
+            base.update({"content_type": "image", "asset_path": src, "url": src})
             return base
         if content_type == "video":
             src = str(payload.get("asset_path") or payload.get("url") or "")
-            base.update({"content_type": "video", "asset_path": src})
+            base.update({"content_type": "video", "asset_path": src, "url": src})
             return base
 
     if not state.active_content_id:
@@ -1029,10 +1029,10 @@ def _resolve_playback_command(db: Session) -> dict[str, object]:
         base.update({"content_type": "webpage", "url": src})
     elif ctype == "image":
         src = str(cfg.get("asset_path") or cfg.get("url", ""))
-        base.update({"content_type": "image", "asset_path": src})
+        base.update({"content_type": "image", "asset_path": src, "url": src})
     elif ctype == "video":
         src = str(cfg.get("asset_path") or cfg.get("url", ""))
-        base.update({"content_type": "video", "asset_path": src})
+        base.update({"content_type": "video", "asset_path": src, "url": src})
     elif ctype == "html":
         base.update({"content_type": "html", "html": str(cfg.get("html", ""))})
     else:
