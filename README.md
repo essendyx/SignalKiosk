@@ -30,14 +30,12 @@ It provides a web-based admin interface for content and scheduling, plus local C
 - Local-first kiosk operation with server and playback on the same machine
 - Web admin UI for managing playback and system behavior
 - Dedicated CDP runner service that launches and controls Chromium
-- Playback is driven by structured commands (`/api/playback/command`), no iframe playback page
 - WebUI system controls to restart runner/backend/frontend from Settings
 - Containerized runtime with Docker Compose
 - FastAPI backend, Vue 3 + TypeScript frontend
 
 ## Architecture
 
-- `backend/`: FastAPI application, scheduling/playback logic, SQLAlchemy, Alembic, tests
 - `backend/`: FastAPI application, scheduling/playback logic, command API for CDP runner
 - `frontend/`: Vue 3 + TypeScript admin application (Vite)
 - `cdp_runner/`: Dedicated CDP runner service (Compose profile: `cdp-runner`)
@@ -97,7 +95,6 @@ sudo bash /opt/SignalKiosk/scripts/post-reboot-verify.sh
 ```
 
 Open admin UI: `http://<server-ip>:8080` (or your `ADMIN_PORT`).
-Do not use a fixed `/playback` URL for kiosk output; the runner navigates dynamically from `GET /api/playback/command`.
 
 ## Configuration
 
@@ -215,7 +212,6 @@ sudo bash scripts/import-full-snapshot.sh /opt/signal-backups/snapshot-20260429
 - System logs out or powers down after idle: re-run `sudo bash scripts/install-interactive.sh` and ensure power hardening is applied
 - Screen turns black after idle: re-run `sudo bash scripts/install-interactive.sh` and then reboot
 - Manual browser test opens UI but not kiosk content: this is expected; `:8080` is admin UI and runner navigates dynamically from `GET /api/playback/command`
-- Browser shows `{"detail":"Not Found"}` on `/playback` via `:8081`: expected, because `:8081` is backend API only
 - `cdp-runner` logs show `Permission denied ... /var/lib/signalkiosk/chrome-profile/First Run`: fix ownership with `sudo chown -R <kiosk-user>:<kiosk-user> /var/lib/signalkiosk`
 - `cdp-runner` logs show repeated `CDP page target not available`: usually no active GUI session or service running as wrong user; verify autologin, then run `sudo bash /opt/SignalKiosk/scripts/post-reboot-verify.sh`
 - System still enters sleep: run `journalctl -b --no-pager | grep -Ei "suspend|hibernate|sleep|logind|power"` to identify what triggered it
