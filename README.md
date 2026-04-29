@@ -11,12 +11,9 @@ It provides a web-based admin interface for content and scheduling, plus local C
 
 ## Table of Contents
 
+- [Recommended One-Path Install](#recommended-one-path-install)
 - [Key Capabilities](#key-capabilities)
 - [Architecture](#architecture)
-- [Quick Start (Ubuntu 22.04/24.04)](#quick-start-ubuntu-22042404)
-- [Fresh Ubuntu End-to-End (Exact Steps)](#fresh-ubuntu-end-to-end-exact-steps)
-- [Fresh Ubuntu Kiosk Setup](#fresh-ubuntu-kiosk-setup)
-- [Kiosk Hardening](#kiosk-hardening)
 - [Configuration](#configuration)
 - [Operations](#operations)
 - [Uninstall](#uninstall)
@@ -58,177 +55,46 @@ It provides a web-based admin interface for content and scheduling, plus local C
 2. Backend calls this agent on `HOST_CONTROL_URL` with `HOST_CONTROL_TOKEN`.
 3. Settings page can trigger: runner restart, backend restart, frontend restart, or app+frontend restart.
 
-## Quick Start (Ubuntu 22.04/24.04)
+## Recommended One-Path Install
 
-### 1) Prepare host
+If you want one single, repeatable setup path (fresh Ubuntu + kiosk + autologin + fullscreen playback), follow only this section.
+You can ignore the other install sections.
 
-```bash
-sudo apt update && sudo apt -y upgrade
-sudo apt -y install git
-```
-
-### 2) Clone repository
-
-```bash
-# Recommended: clone outside /opt. The installer copies the project to /opt/SignalKiosk itself.
-cd ~
-git clone https://github.com/essendyx/SignalKiosk.git
-cd SignalKiosk
-```
-
-If you already cloned to `/opt/SignalKiosk` and run `scripts/install.sh` from there, step `[3/8] Copying project to /opt/SignalKiosk` can fail with:
-
-`cp: '.' and '/opt/SignalKiosk/.' are the same file`
-
-In that case, clone again to a different source directory (for example `~/SignalKiosk`) and rerun the installer from that directory.
-
-### 3) Run installer
-
-```bash
-sudo bash scripts/install.sh
-```
-
-`scripts/install.sh` now delegates to `scripts/setup-ubuntu-kiosk.sh`.
-
-For full host-kiosk setup with local Chromium controlled via CDP (recommended for real fullscreen kiosk), use:
-
-```bash
-sudo bash scripts/setup-ubuntu-kiosk.sh
-```
-
-The installer automatically:
-
-- Installs Docker Engine and Docker Compose plugin (if missing)
-- Installs project to `/opt/SignalKiosk`
-- Creates `.env` from `.env.example`
-- Starts services with `docker compose up -d --build`
-- Uses CDP-based playback command API for browser control
-
-### 4) Validate installation
-
-```bash
-docker ps
-docker compose -f /opt/SignalKiosk/docker-compose.yml ps
-docker compose -f /opt/SignalKiosk/docker-compose.yml --profile cdp-runner ps
-```
-
-Admin UI:
-
-- `http://<SERVER-IP>:8080` (or your configured `ADMIN_PORT`)
-
-Default credentials:
-
-- Username: `admin`
-- Password: `admin123!`
-
-## Configuration
-
-Primary config file: `/opt/SignalKiosk/.env`
-
-| Variable | Description | Example |
-| --- | --- | --- |
-| `ADMIN_PORT` | Admin UI web port | `8080` |
-| `DATABASE_URL` | SQLite database location | `sqlite:////data/localkiosk.db` |
-| `SECRET_ENCRYPTION_KEY` | Secret key (auto-generated if empty) | `` |
-| `CDP_POLL_INTERVAL_SECONDS` | Runner polling interval for playback commands | `1.5` |
-| `CDP_PORT` | Internal Chrome DevTools port used by runner | `9222` |
-| `CHROME_HEADLESS` | Run browser headless in CDP runner | `false` |
-| `CHROME_ALLOW_INSECURE` | Relax browser security checks (unsafe) | `false` |
-| `HOST_CONTROL_URL` | Host control agent URL used by backend | `http://127.0.0.1:9510` |
-| `HOST_CONTROL_TOKEN` | Shared token between backend and host control agent | `` |
-
-For local Windows runner scripts, these parameters are relevant:
-
-- `-AppBaseUrl` (default `http://127.0.0.1:8081`)
-- `-ChromeBin` (auto-detected if omitted)
-- `-CdpPort` (default `9222`)
-- `-PollIntervalSeconds` (default `1.5`)
-- `-ChromeUserDataDir` (default `%LOCALAPPDATA%\SignalKiosk\cdp-chrome-profile`)
-
-Apply config changes:
-
-```bash
-cd /opt/SignalKiosk
-docker compose up -d
-docker compose --profile cdp-runner up -d cdp-runner
-```
-
-## Fresh Ubuntu End-to-End (Exact Steps)
-
-Use this procedure on a blank Ubuntu 22.04/24.04 install.
-
-### 1) Create kiosk user with sudo rights
-
-Pick a username (example: `signalkiosk`) and create it:
+### 1) Create kiosk user
 
 ```bash
 sudo adduser signalkiosk
 sudo usermod -aG sudo signalkiosk
-```
-
-Optional but recommended for Docker CLI without sudo after login:
-
-```bash
-sudo usermod -aG docker signalkiosk
-```
-
-Switch to this user:
-
-```bash
 su - signalkiosk
 ```
 
-### 2) Base system update
+### 2) Install and run SignalKiosk setup
 
 ```bash
 sudo apt update && sudo apt -y upgrade
 sudo apt -y install git
-```
-
-### 3) Clone repository (outside `/opt`)
-
-```bash
 cd ~
 git clone https://github.com/essendyx/SignalKiosk.git SignalKiosk-src
 cd SignalKiosk-src
-```
-
-### 4) Run kiosk installer
-
-```bash
 sudo bash scripts/setup-ubuntu-kiosk.sh
 ```
 
-### 5) Configure environment
-
-The installer copies the project to `/opt/SignalKiosk` and creates `/opt/SignalKiosk/.env`.
-Edit that file (not the one in your home clone):
+### 3) Edit active config
 
 ```bash
 sudo nano /opt/SignalKiosk/.env
-```
-
-Apply changes:
-
-```bash
 cd /opt/SignalKiosk
 sudo docker compose up -d
-sudo systemctl restart signalkiosk-cdp-runner.service
-sudo systemctl restart signalkiosk-host-control.service
+sudo systemctl restart signalkiosk-cdp-runner.service signalkiosk-host-control.service
 ```
 
-### 6) Install desktop and enable GUI boot
+### 4) Install desktop and enable autologin
 
 ```bash
 sudo apt update
 sudo apt -y install xfce4 xfce4-goodies lightdm
 sudo systemctl set-default graphical.target
 sudo systemctl enable lightdm
-```
-
-### 7) Enable automatic desktop login (required for visible playback)
-
-```bash
 sudo mkdir -p /etc/lightdm/lightdm.conf.d
 sudo bash -c 'cat >/etc/lightdm/lightdm.conf.d/50-signalkiosk-autologin.conf <<EOF
 [Seat:*]
@@ -238,90 +104,7 @@ user-session=xfce
 EOF'
 ```
 
-If your username is not `signalkiosk`, replace `autologin-user=signalkiosk` accordingly.
-
-### 8) Reboot and verify
-
-```bash
-sudo reboot
-```
-
-After reboot (on local terminal in the GUI session):
-
-```bash
-echo $DISPLAY
-systemctl is-active signalkiosk-cdp-runner.service
-systemctl is-active signalkiosk-host-control.service
-journalctl -u signalkiosk-cdp-runner.service -n 80 --no-pager
-```
-
-`echo $DISPLAY` should typically be `:0` (sometimes `:1`).
-
-## Fresh Ubuntu Kiosk Setup
-
-Use this on a clean Ubuntu host when you want backend/frontend in Docker but kiosk Chromium on the host.
-
-Run:
-
-```bash
-sudo bash scripts/setup-ubuntu-kiosk.sh
-```
-
-What the script does:
-
-- Installs Docker (if missing), Python, and Chromium
-- Copies project to `/opt/SignalKiosk`
-- Creates `.env` from `.env.example` if needed
-- Starts `app` and `frontend` via Docker Compose
-- Installs `cdp_runner` Python dependencies on host
-- Creates and enables `signalkiosk-cdp-runner.service`
-- Creates and enables `signalkiosk-host-control.service`
-
-### Required for visible playback on TV/monitor
-
-Host-mode playback needs a running Linux desktop session (X11). If the machine only boots to a text console (TTY), Chromium cannot open a visible kiosk window.
-
-Install a lightweight desktop + display manager:
-
-```bash
-sudo apt update
-sudo apt -y install xfce4 xfce4-goodies lightdm
-sudo systemctl set-default graphical.target
-sudo systemctl enable lightdm
-```
-
-Enable automatic login for kiosk user (example: `signalkiosk`):
-
-```bash
-sudo bash -c 'cat >/etc/lightdm/lightdm.conf.d/50-signalkiosk-autologin.conf <<EOF
-[Seat:*]
-autologin-user=signalkiosk
-autologin-user-timeout=0
-user-session=xfce
-EOF'
-```
-
-Then reboot:
-
-```bash
-sudo reboot
-```
-
-After reboot, verify a GUI session is active and restart the runner once:
-
-```bash
-echo $DISPLAY
-sudo systemctl restart signalkiosk-cdp-runner.service
-journalctl -u signalkiosk-cdp-runner.service -n 80 --no-pager
-```
-
-`echo $DISPLAY` should usually be `:0` (sometimes `:1`).
-
-## Kiosk Hardening
-
-Use this to prevent screen blanking, screensaver lock, and DPMS power-off on kiosk displays.
-
-### 1) Disable X11 screensaver and DPMS for each GUI login
+### 5) Kiosk hardening (no blank screen)
 
 ```bash
 sudo tee /etc/xdg/autostart/signalkiosk-display-power.desktop >/dev/null <<'EOF'
@@ -334,38 +117,49 @@ NoDisplay=true
 EOF
 ```
 
-### 2) Disable XFCE session lock/saver defaults
-
-```bash
-mkdir -p ~/.config/xfce4/xfconf/xfce-perchannel-xml
-cat > ~/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-screensaver.xml <<'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<channel name="xfce4-screensaver" version="1.0">
-  <property name="lock" type="bool" value="false"/>
-  <property name="idle-activation" type="bool" value="false"/>
-  <property name="mode" type="int" value="0"/>
-</channel>
-EOF
-```
-
-### 3) Apply now
-
-Log out and log in again (or reboot):
+### 6) Reboot and verify
 
 ```bash
 sudo reboot
 ```
 
-Verify after GUI login:
+After reboot:
 
 ```bash
-xset q | grep -E "DPMS is|timeout:"
+echo $DISPLAY
+systemctl is-active signalkiosk-cdp-runner.service
+journalctl -u signalkiosk-cdp-runner.service -n 50 --no-pager
 ```
 
-Expected indicators:
+Open admin UI: `http://<server-ip>:8080` (or your `ADMIN_PORT`).
 
-- `DPMS is Disabled`
-- Screensaver timeout values show `0`
+## Configuration
+
+Primary config file: `/opt/SignalKiosk/.env`
+
+Minimal `.env` for this setup:
+
+```dotenv
+APP_ENV=production
+APP_SECRET_KEY=change-me-to-a-long-random-secret
+SECRET_ENCRYPTION_KEY=
+ADMIN_PORT=8080
+PLAYBACK_PORT=8081
+DATABASE_URL=sqlite:////data/localkiosk.db
+TZ=Europe/Berlin
+HOST_CONTROL_URL=http://127.0.0.1:9510
+HOST_CONTROL_TOKEN=change-me-to-a-long-random-token
+DEFAULT_ADMIN_USERNAME=admin
+DEFAULT_ADMIN_PASSWORD=admin
+```
+
+Apply config changes:
+
+```bash
+cd /opt/SignalKiosk
+sudo docker compose up -d
+sudo systemctl restart signalkiosk-cdp-runner.service signalkiosk-host-control.service
+```
 
 Service operations:
 
@@ -450,7 +244,7 @@ sudo bash scripts/import-full-snapshot.sh /opt/signal-backups/snapshot-20260429
 
 - Browser does not update: inspect `cdp-runner` logs and verify `app` is reachable
 - TV shows only text console/no browser: install desktop + display manager, enable autologin, and boot into `graphical.target`
-- Screen turns black after idle: apply steps in `Kiosk Hardening` to disable screensaver and DPMS
+- Screen turns black after idle: repeat step `5) Kiosk hardening (no blank screen)` from `Recommended One-Path Install`
 - Restart buttons in Settings are disabled/failing: verify `HOST_CONTROL_TOKEN` in `.env` and host service `signalkiosk-host-control.service`
 - Browser stays on `about:blank`: check `http://127.0.0.1:8081/api/playback/command` returns `changed: true` on first call and valid `content_type`
 - Too many refreshes/navigations: inspect runner logs with timestamp; command updates now use revision + hash to avoid timer-only reloads
