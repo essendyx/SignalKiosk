@@ -56,6 +56,26 @@ const generateToken = (): void => {
   tokenMessage.value = locale.value === "de" ? "Token wird beim Hinzufuegen automatisch erzeugt." : "Token is generated automatically when added."
 }
 
+const fallbackCopyText = (value: string): boolean => {
+  const ta = document.createElement("textarea")
+  ta.value = value
+  ta.setAttribute("readonly", "")
+  ta.style.position = "fixed"
+  ta.style.top = "-1000px"
+  ta.style.left = "-1000px"
+  document.body.appendChild(ta)
+  ta.focus()
+  ta.select()
+  let ok = false
+  try {
+    ok = document.execCommand("copy")
+  } catch {
+    ok = false
+  }
+  document.body.removeChild(ta)
+  return ok
+}
+
 const copyToken = async (id: string): Promise<void> => {
   try {
     const res = await api.get(`/webhook-config/tokens/${id}/secret`)
@@ -64,10 +84,14 @@ const copyToken = async (id: string): Promise<void> => {
       tokenMessage.value = locale.value === "de" ? "Token konnte nicht gelesen werden." : "Token could not be read."
       return
     }
-    await navigator.clipboard.writeText(token)
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(token)
+    } else if (!fallbackCopyText(token)) {
+      throw new Error("clipboard copy failed")
+    }
     tokenMessage.value = locale.value === "de" ? "Token wurde in die Zwischenablage kopiert." : "Token copied to clipboard."
   } catch {
-    tokenMessage.value = locale.value === "de" ? "Kopieren fehlgeschlagen." : "Copy failed."
+    tokenMessage.value = locale.value === "de" ? "Kopieren fehlgeschlagen. Nutze HTTPS oder localhost, oder kopiere das Token manuell ueber die API." : "Copy failed. Use HTTPS or localhost, or copy the token manually via API."
   }
 }
 

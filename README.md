@@ -183,6 +183,77 @@ sudo chmod -R u+rwX /var/lib/signalkiosk
 sudo systemctl restart signalkiosk-cdp-runner.service
 ```
 
+### 8) Disable auto-suspend, power-off, and logout behavior
+
+On kiosk systems, disable sleep/suspend at OS and desktop level.
+
+```bash
+sudo mkdir -p /etc/systemd/logind.conf.d
+sudo tee /etc/systemd/logind.conf.d/50-signalkiosk.conf >/dev/null <<'EOF'
+[Login]
+HandleLidSwitch=ignore
+HandleLidSwitchExternalPower=ignore
+HandleLidSwitchDocked=ignore
+IdleAction=ignore
+IdleActionSec=0
+EOF
+sudo systemctl restart systemd-logind
+```
+
+```bash
+sudo mkdir -p /etc/systemd/sleep.conf.d
+sudo tee /etc/systemd/sleep.conf.d/50-signalkiosk.conf >/dev/null <<'EOF'
+[Sleep]
+AllowSuspend=no
+AllowHibernation=no
+AllowHybridSleep=no
+AllowSuspendThenHibernate=no
+EOF
+```
+
+```bash
+sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
+```
+
+```bash
+xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/power-button-action -n -t int -s 0
+xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/sleep-button-action -n -t int -s 0
+xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/hibernate-button-action -n -t int -s 0
+xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/inactivity-on-ac -n -t int -s 14
+xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/dpms-enabled -n -t bool -s false
+```
+
+Create a per-login autostart guard so XFCE cannot re-enable sleep/DPMS after updates:
+
+```bash
+mkdir -p ~/.config/autostart
+cat > ~/.config/autostart/signalkiosk-nosleep.desktop <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=SignalKiosk NoSleep
+Exec=sh -c "xset s off -dpms s noblank; xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/dpms-enabled -n -t bool -s false; xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/blank-on-ac -n -t int -s 0; xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/inactivity-on-ac -n -t int -s 14"
+X-GNOME-Autostart-enabled=true
+EOF
+```
+
+Reboot after applying:
+
+```bash
+sudo reboot
+```
+
+Verify sleep targets are masked:
+
+```bash
+systemctl status sleep.target suspend.target hibernate.target hybrid-sleep.target --no-pager
+```
+
+Verify DPMS/screensaver state:
+
+```bash
+xset q | grep -E "DPMS is|timeout:"
+```
+
 ## Configuration
 
 Primary config file: `/opt/SignalKiosk/.env`
@@ -296,11 +367,13 @@ sudo bash scripts/import-full-snapshot.sh /opt/signal-backups/snapshot-20260429
 
 - Browser does not update: inspect `cdp-runner` logs and verify `app` is reachable
 - TV shows only text console/no browser: install desktop + display manager, enable autologin, and boot into `graphical.target`
+- System logs out or powers down after idle: apply step `8) Disable auto-suspend, power-off, and logout behavior`
 - Screen turns black after idle: repeat step `5) Kiosk hardening (no blank screen)` from `Recommended One-Path Install`
 - Manual browser test opens UI but not kiosk content: this is expected; `:8080` is admin UI and runner navigates dynamically from `GET /api/playback/command`
 - Browser shows `{"detail":"Not Found"}` on `/playback` via `:8081`: expected, because `:8081` is backend API only
 - `cdp-runner` logs show `Permission denied ... /var/lib/signalkiosk/chrome-profile/First Run`: fix owner/permissions with the commands in step `7`
 - `cdp-runner` logs show repeated `CDP page target not available`: usually no active GUI session or service running as wrong user; apply step `7` and verify autologin/desktop session
+- System still enters sleep: run `journalctl -b --no-pager | grep -Ei "suspend|hibernate|sleep|logind|power"` to identify what triggered it
 - Restart buttons in Settings are disabled/failing: verify `HOST_CONTROL_TOKEN` in `.env` and host service `signalkiosk-host-control.service`
 - Browser stays on `about:blank`: check `http://127.0.0.1:8081/api/playback/command` returns `changed: true` on first call and valid `content_type`
 - Too many refreshes/navigations: inspect runner logs with timestamp; command updates now use revision + hash to avoid timer-only reloads

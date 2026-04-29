@@ -133,7 +133,7 @@ def _get_playback_revision(db: Session) -> int:
 def _get_central_webhook_config(db: Session) -> dict[str, object]:
     raw = db.get(SystemSetting, "webhook.central_config")
     if not raw:
-        return {"enabled": True, "token_hash": ""}
+        return {"enabled": True, "tokens": [], "legacy_token_hash": ""}
     try:
         value = json.loads(raw.value_json)
     except Exception:
