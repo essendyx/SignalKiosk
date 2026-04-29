@@ -223,6 +223,13 @@ xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/inactivity-on-ac -n 
 xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/dpms-enabled -n -t bool -s false
 ```
 
+Disable screen locker packages/services if present:
+
+```bash
+sudo systemctl disable --now light-locker 2>/dev/null || true
+sudo apt -y purge light-locker xscreensaver* || true
+```
+
 Create a per-login autostart guard so XFCE cannot re-enable sleep/DPMS after updates:
 
 ```bash
@@ -253,6 +260,18 @@ Verify DPMS/screensaver state:
 ```bash
 xset q | grep -E "DPMS is|timeout:"
 ```
+
+Run the `xset` check in a local GUI terminal on the TV/monitor session.
+If you run it via SSH, use:
+
+```bash
+DISPLAY=:0 xset q | grep -E "DPMS is|timeout:"
+```
+
+Expected result in GUI session:
+
+- `DPMS is Disabled`
+- `DISPLAY` usually `:0` or `:0.0`
 
 ## Configuration
 
