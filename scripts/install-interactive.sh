@@ -557,26 +557,33 @@ main() {
   uid_value="$(id -u "${target_user}")"
   mkdir -p /etc/systemd/system/signalkiosk-cdp-runner.service.d
   cat > /etc/systemd/system/signalkiosk-cdp-runner.service.d/10-user.conf <<EOF
+[Unit]
+After=lightdm.service graphical.target
+Wants=lightdm.service
+
 [Service]
 User=${target_user}
 Group=${target_user}
 Environment=DISPLAY=:0
 Environment=XDG_RUNTIME_DIR=/run/user/${uid_value}
 Environment=XAUTHORITY=/home/${target_user}/.Xauthority
+ExecStartPre=
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do if [ -S /tmp/.X11-unix/X0 ] && [ -f /home/${target_user}/.Xauthority ]; then exit 0; fi; sleep 1; done; exit 0'
 EOF
 
   mkdir -p /var/lib/signalkiosk/chrome-profile
   chown -R "${target_user}:${target_user}" /var/lib/signalkiosk
   chmod -R u+rwX /var/lib/signalkiosk
 
-  systemctl daemon-reload
-  systemctl restart signalkiosk-cdp-runner.service
-  systemctl restart signalkiosk-host-control.service
-
   configure_desktop_autologin "${target_user}"
   configure_kiosk_hardening "${target_user}"
   configure_disable_autosuspend
   apply_xfce_power_settings "${target_user}"
+
+  systemctl daemon-reload
+  systemctl restart signalkiosk-cdp-runner.service
+  systemctl restart signalkiosk-host-control.service
+
   write_post_reboot_verify_script
 
   log "VERIFY" "Running post-install checks"

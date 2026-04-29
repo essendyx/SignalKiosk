@@ -142,8 +142,8 @@ mkdir -p "${PROFILE_DIR}"
 cat > "${SERVICE_FILE}" <<EOF
 [Unit]
 Description=SignalKiosk CDP Runner (Host Chrome via CDP)
-After=network-online.target docker.service
-Wants=network-online.target
+After=network-online.target docker.service lightdm.service graphical.target
+Wants=network-online.target lightdm.service
 
 [Service]
 Type=simple
@@ -154,6 +154,7 @@ Environment=CDP_PORT=9222
 Environment=POLL_INTERVAL_SECONDS=1.5
 Environment=CHROME_HEADLESS=false
 Environment=CHROME_USER_DATA_DIR=${PROFILE_DIR}
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 45); do [ -S /tmp/.X11-unix/X0 ] && exit 0; sleep 1; done; exit 0'
 ExecStart=/usr/bin/python3 ${PROJECT_DIR}/cdp_runner/runner.py
 Restart=always
 RestartSec=3
