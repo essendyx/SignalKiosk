@@ -4,6 +4,7 @@ import os
 import re
 import secrets
 import uuid
+import hashlib
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 import httpx
@@ -1048,7 +1049,8 @@ def _playback_command_hash(command: dict[str, object]) -> str:
         "html": command.get("html"),
         "asset_path": command.get("asset_path"),
     }
-    return json.dumps(fingerprint, sort_keys=True, ensure_ascii=True)
+    raw = json.dumps(fingerprint, sort_keys=True, ensure_ascii=True)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 @app.get("/api/playback/command")
 def playback_command(

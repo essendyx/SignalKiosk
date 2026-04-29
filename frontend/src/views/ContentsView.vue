@@ -144,7 +144,7 @@ const onFileSelected = async (event: Event): Promise<void> => {
   fd.append("file", input.files[0])
   try {
     const res = await api.post("/uploads", fd, { headers: { "Content-Type": "multipart/form-data" } })
-    assetPath.value = res.data.asset_path as string
+    assetPath.value = String((res.data as { asset_path?: string }).asset_path || "")
     uploadState.value = locale.value === "de" ? `Upload erfolgreich: ${res.data.name}` : `Upload successful: ${res.data.name}`
   } catch (err: any) {
     uploadState.value = err?.response?.data?.detail || (locale.value === "de" ? "Upload fehlgeschlagen" : "Upload failed")
@@ -180,15 +180,29 @@ const typeLabel = (value: string): string => {
 }
 
 const sourceSummary = (item: Content): string => {
+  const summarizeValue = (value: string): string => {
+    const text = String(value || "")
+    if (!text) return "-"
+    if (text.startsWith("data:image/")) {
+      const commaIndex = text.indexOf(",")
+      const payload = commaIndex >= 0 ? text.slice(commaIndex + 1) : ""
+      const approxBytes = Math.floor((payload.length * 3) / 4)
+      const approxMb = (approxBytes / (1024 * 1024)).toFixed(2)
+      return locale.value === "de" ? `Bild (Base64, ca. ${approxMb} MB)` : `Image (base64, ~${approxMb} MB)`
+    }
+    if (text.length > 180) return `${text.slice(0, 180)}...`
+    return text
+  }
+
   try {
     const cfg = JSON.parse(item.config_json) as { url?: string; asset_path?: string; html?: string }
     if (item.type === "html") return locale.value === "de" ? "Inline HTML" : "Inline HTML"
     if (item.type === "webpage") {
-      if (cfg.url) return cfg.url
+      if (cfg.url) return summarizeValue(cfg.url)
       return "-"
     }
-    if (cfg.asset_path) return cfg.asset_path
-    if (cfg.url) return cfg.url
+    if (cfg.asset_path) return summarizeValue(cfg.asset_path)
+    if (cfg.url) return summarizeValue(cfg.url)
   } catch {
     return "-"
   }
