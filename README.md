@@ -20,6 +20,7 @@ It provides a web-based admin interface for content and scheduling, plus local C
 - [Backup and Restore](#backup-and-restore)
 - [Troubleshooting](#troubleshooting)
 - [Development](#development)
+- [Releases](#releases)
 - [Local CDP Runner (Windows)](#local-cdp-runner-windows)
 - [Security Notes](#security-notes)
 - [License](#license)
@@ -420,6 +421,32 @@ cd frontend
 npm install
 npm run dev
 ```
+
+## Releases
+
+This repository publishes a GitHub release automatically when you push a tag that starts with `v`.
+
+Example first release:
+
+```bash
+git checkout main
+git pull
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+What happens automatically after the tag push:
+
+- GitHub Actions runs frontend install + build
+- GitHub Actions runs backend tests (`pytest`)
+- GitHub creates a Release with auto-generated notes
+- The frontend build artifact is attached as `frontend-dist.zip`
+
+Versioning format:
+
+- `v0.1.0` for first usable preview
+- `v1.0.0` for first stable public release
+- Patch fixes use `v1.0.1`, `v1.0.2`, ...
 
 ## Local CDP Runner (Windows)
 
