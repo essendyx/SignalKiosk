@@ -2,6 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import api from "../api"
 import { useI18n } from "../i18n"
+import { confirmDiscardChanges, useUnsavedChangesGuard } from "../composables/useUnsavedChangesGuard"
+import { showToast } from "../state/toast"
 
 interface Preset {
   id: string
@@ -40,6 +42,7 @@ const showDeleteModal = ref(false)
 const createName = ref("")
 const createDescription = ref("")
 const createIsDefault = ref(false)
+const dirtyItemIds = ref<string[]>([])
 const { locale, t } = useI18n()
 
 const text = computed(() => locale.value === "de" ? {
@@ -115,6 +118,11 @@ const text = computed(() => locale.value === "de" ? {
 const selectedPreset = computed(() => presets.value.find((item) => item.id === selectedPresetId.value) || null)
 const hasPresets = computed(() => presets.value.length > 0)
 const durationRequiredForNew = computed(() => presetItems.value.filter((item) => item.enabled).length >= 1)
+const hasDirtyItems = computed(() => dirtyItemIds.value.length > 0)
+const isDirty = computed(() => {
+  const createDirty = showCreateModal.value && (Boolean(createName.value.trim()) || Boolean(createDescription.value.trim()) || createIsDefault.value)
+  return createDirty || dirtyItemIds.value.length > 0
+})
 
 const load = async (): Promise<void> => {
   error.value = ""
@@ -149,6 +157,7 @@ const openCreateModal = (): void => {
 }
 
 const closeCreateModal = (): void => {
+  if (showCreateModal.value && (createName.value.trim() || createDescription.value.trim() || createIsDefault.value) && !confirmDiscardChanges(locale)) return
   showCreateModal.value = false
 }
 
@@ -172,8 +181,10 @@ const createPreset = async (): Promise<void> => {
     await load()
     const created = presets.value.find((item) => item.name === createName.value)
     if (created) selectedPresetId.value = created.id
+    showToast(locale.value === "de" ? "Preset gespeichert." : "Preset saved.")
   } catch (err: any) {
     error.value = err?.response?.data?.detail || "Preset konnte nicht erstellt werden"
+    showToast(locale.value === "de" ? "Speichern fehlgeschlagen." : "Save failed.", "error")
   }
 }
 
@@ -185,6 +196,7 @@ const deleteSelectedPreset = async (): Promise<void> => {
     closeDeleteModal()
     selectedPresetId.value = ""
     await load()
+    showToast(locale.value === "de" ? "Preset geloescht." : "Preset deleted.")
   } catch (err: any) {
     error.value = err?.response?.data?.detail || "Preset konnte nicht geloescht werden"
   }
@@ -206,6 +218,7 @@ const setAsDefault = async (): Promise<void> => {
     const keepId = selectedPreset.value.id
     await load()
     selectedPresetId.value = keepId
+    showToast(locale.value === "de" ? "Standard-Preset gesetzt." : "Default preset updated.")
   } catch (err: any) {
     error.value = err?.response?.data?.detail || "Standard-Preset konnte nicht gesetzt werden"
   }
@@ -225,6 +238,7 @@ const addItem = async (): Promise<void> => {
     })
     newDuration.value = null
     await loadPresetItems()
+    showToast(locale.value === "de" ? "Inhalt hinzugefuegt." : "Content added.")
   } catch (err: any) {
     error.value = err?.response?.data?.detail || "Inhalt konnte nicht hinzugefuegt werden"
   }
@@ -241,8 +255,34 @@ const saveItem = async (item: PresetItem): Promise<void> => {
       enabled: item.enabled,
       transition: null
     })
+    dirtyItemIds.value = dirtyItemIds.value.filter((id) => id !== item.id)
+    showToast(locale.value === "de" ? "Eintrag gespeichert." : "Item saved.")
   } catch (err: any) {
     error.value = err?.response?.data?.detail || "Inhalt konnte nicht gespeichert werden"
+    await loadPresetItems()
+  }
+}
+
+const saveDirtyItems = async (): Promise<void> => {
+  const dirtyItems = presetItems.value.filter((item) => dirtyItemIds.value.includes(item.id))
+  if (dirtyItems.length === 0) return
+  error.value = ""
+  try {
+    await Promise.all(
+      dirtyItems.map((item) => api.put(`/preset-items/${item.id}`, {
+        content_id: item.content_id,
+        position: item.position,
+        duration_seconds: item.duration_seconds,
+        play_until_end: false,
+        enabled: item.enabled,
+        transition: null
+      }))
+    )
+    dirtyItemIds.value = []
+    showToast(locale.value === "de" ? "Aenderungen gespeichert." : "Changes saved.")
+  } catch (err: any) {
+    error.value = err?.response?.data?.detail || "Aenderungen konnten nicht gespeichert werden"
+    showToast(locale.value === "de" ? "Speichern fehlgeschlagen." : "Save failed.", "error")
     await loadPresetItems()
   }
 }
@@ -252,6 +292,8 @@ const removeItem = async (id: string): Promise<void> => {
   try {
     await api.delete(`/preset-items/${id}`)
     await loadPresetItems()
+    dirtyItemIds.value = dirtyItemIds.value.filter((itemId) => itemId !== id)
+    showToast(locale.value === "de" ? "Eintrag entfernt." : "Item removed.")
   } catch (err: any) {
     error.value = err?.response?.data?.detail || "Inhalt konnte nicht entfernt werden"
   }
@@ -271,24 +313,12 @@ const onDrop = async (targetId: string): Promise<void> => {
   const [moved] = reordered.splice(sourceIndex, 1)
   reordered.splice(targetIndex, 0, moved)
   presetItems.value = reordered.map((item, index) => ({ ...item, position: index }))
+  for (const item of presetItems.value) markItemDirty(item.id)
+  draggingItemId.value = ""
+}
 
-  try {
-    await Promise.all(
-      presetItems.value.map((item) => api.put(`/preset-items/${item.id}`, {
-        content_id: item.content_id,
-        position: item.position,
-        duration_seconds: item.duration_seconds,
-        play_until_end: false,
-        enabled: item.enabled,
-        transition: null
-      }))
-    )
-  } catch (err: any) {
-    error.value = err?.response?.data?.detail || "Sortierung konnte nicht gespeichert werden"
-    await loadPresetItems()
-  } finally {
-    draggingItemId.value = ""
-  }
+const markItemDirty = (id: string): void => {
+  if (!dirtyItemIds.value.includes(id)) dirtyItemIds.value.push(id)
 }
 
 const onEsc = (event: KeyboardEvent): void => {
@@ -309,6 +339,8 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener("keydown", onEsc)
 })
+
+useUnsavedChangesGuard(isDirty, locale)
 </script>
 
 <template>
@@ -361,6 +393,9 @@ onBeforeUnmount(() => {
       </div>
       <p class="hint">{{ text.rule }}</p>
       <p class="hint">{{ text.drag }}</p>
+      <div class="toolbar">
+        <button @click="saveDirtyItems" :disabled="!hasDirtyItems">{{ t("save") }}</button>
+      </div>
     </div>
 
     <table class="data-table preset-items-table" v-if="hasPresets">
@@ -375,13 +410,13 @@ onBeforeUnmount(() => {
           @drop="onDrop(row.id)"
         >
           <td>
-            <select v-model="row.content_id" @change="saveItem(row)">
+            <select v-model="row.content_id" @change="markItemDirty(row.id)">
               <option v-for="c in contents" :key="c.id" :value="c.id">{{ c.name }}</option>
             </select>
           </td>
           <td>{{ row.position }}</td>
           <td>
-            <input v-model.number="row.duration_seconds" type="number" min="1" :placeholder="presetItems.length <= 1 ? `${text.optional} (s)` : `${text.required} (s)`" @change="saveItem(row)" />
+            <input v-model.number="row.duration_seconds" type="number" min="1" :placeholder="presetItems.length <= 1 ? `${text.optional} (s)` : `${text.required} (s)`" @change="markItemDirty(row.id)" />
           </td>
           <td class="actions">
             <button class="ghost" @click="saveItem(row)">{{ t("save") }}</button>

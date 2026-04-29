@@ -7,7 +7,7 @@ from pathlib import Path
 from urllib.parse import quote, urljoin, urlsplit
 import re
 from datetime import datetime, timezone, timedelta
-from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -197,9 +197,17 @@ async def _proxy_to_current_origin(path: str, request: Request) -> Response:
     body = await request.body()
     with httpx.Client(follow_redirects=True, timeout=20.0) as client:
         res = client.request(request.method, url, headers=headers, content=body)
-    excluded = {"content-encoding", "transfer-encoding", "connection"}
+    excluded = {"content-encoding", "transfer-encoding", "connection", "content-length"}
     out_headers = {k: v for k, v in res.headers.items() if k.lower() not in excluded}
-    return Response(content=res.content, status_code=res.status_code, media_type=res.headers.get("content-type"), headers=out_headers)
+    out_headers.pop("x-frame-options", None)
+    csp_value = out_headers.get("content-security-policy")
+    if csp_value and "frame-ancestors" in csp_value.lower():
+        out_headers.pop("content-security-policy", None)
+    content_type = res.headers.get("content-type", "")
+    if "text/html" in content_type.lower():
+        rewritten = _rewrite_html_for_proxy(res.text, str(res.url))
+        return HTMLResponse(content=rewritten, status_code=res.status_code, headers=out_headers)
+    return Response(content=res.content, status_code=res.status_code, media_type=content_type or None, headers=out_headers)
 
 
 @app.api_route("/playback/site", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
@@ -215,6 +223,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def playback_referrer_policy(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/playback"):
+        response.headers["Referrer-Policy"] = "no-referrer"
+    return response
 
 
 @app.on_event("startup")
@@ -594,11 +610,18 @@ def put_setting(key: str, payload: SystemSettingIn, db: Session = Depends(get_db
 
 
 @app.post("/webhook/{slug}")
-def webhook(slug: str, payload: WebhookTriggerIn, token: str = Query(default=""), db: Session = Depends(get_db)):
+def webhook(
+    slug: str,
+    payload: WebhookTriggerIn,
+    token: str = Query(default=""),
+    x_signalkiosk_token: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
     endpoint = db.execute(select(WebhookEndpoint).where(WebhookEndpoint.slug == slug, WebhookEndpoint.enabled.is_(True))).scalars().first()
     if not endpoint:
         raise HTTPException(status_code=404, detail="Webhook endpoint not found")
-    if endpoint.token_hash != hash_token(token):
+    auth_token = x_signalkiosk_token if x_signalkiosk_token else token
+    if endpoint.token_hash != hash_token(auth_token):
         raise HTTPException(status_code=401, detail="Invalid token")
     allowed = set(endpoint.allowed_actions.split(","))
     if payload.action not in allowed:
@@ -719,7 +742,11 @@ def _build_playback_fragment(db: Session) -> dict[str, str | None]:
         action = payload.get("action")
         if action == "play_url" and payload.get("url"):
             url = str(payload["url"])
-            src = "/playback/proxy?target=" + quote(url, safe="") if _url_is_probably_frame_blocked(url) else url
+            if _url_is_probably_frame_blocked(url):
+                _set_proxy_origin(url)
+                src = _to_site_proxy_path(url)
+            else:
+                src = url
             return {"mode": state.active_mode, "active_content_id": state.active_content_id, "ends_at": state.ends_at.isoformat() if state.ends_at else None, "html": f"<iframe src='{src}' style='border:0;width:100vw;height:100vh'></iframe>"}
         if action == "play_html":
             return {"mode": state.active_mode, "active_content_id": state.active_content_id, "ends_at": state.ends_at.isoformat() if state.ends_at else None, "html": str(payload.get("html", ""))}
@@ -748,7 +775,7 @@ def _build_playback_fragment(db: Session) -> dict[str, str | None]:
             src = "/playback/site"
         elif src and _url_is_probably_frame_blocked(src):
             _set_proxy_origin(src)
-            src = "/playback/proxy?target=" + quote(src, safe="")
+            src = _to_site_proxy_path(src)
         html_fragment = f"<iframe src='{src}' style='border:0;width:100vw;height:100vh'></iframe>"
     elif ctype == "image":
         src = str(cfg.get("asset_path") or cfg.get("url", ""))

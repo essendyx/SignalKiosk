@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from "vue"
+import { computed, onBeforeUnmount, onMounted, ref } from "vue"
 import api from "../api"
 import { useI18n } from "../i18n"
+import { confirmDiscardChanges, useUnsavedChangesGuard } from "../composables/useUnsavedChangesGuard"
+import { showToast } from "../state/toast"
 
 interface Content {
   id: string
@@ -28,6 +30,17 @@ const showModal = ref(false)
 const showDeleteModal = ref(false)
 const selectedContentId = ref("")
 const { locale, t } = useI18n()
+const isDirty = computed(() => showModal.value && (
+  Boolean(name.value.trim()) ||
+  type.value !== "webpage" ||
+  sourceUrl.value !== "https://example.org" ||
+  webpageMode.value !== "direct" ||
+  Boolean(assetPath.value.trim()) ||
+  htmlValue.value !== "<section><h1>Welcome</h1><p>Your SignalKiosk is ready.</p></section>" ||
+  Boolean(description.value.trim()) ||
+  duration.value !== 15 ||
+  Boolean(editingId.value)
+))
 
 const load = async (): Promise<void> => {
   const res = await api.get("/contents")
@@ -58,6 +71,7 @@ const openCreateModal = (): void => {
 }
 
 const closeModal = (): void => {
+  if (isDirty.value && !confirmDiscardChanges(locale)) return
   showModal.value = false
 }
 
@@ -89,8 +103,10 @@ const save = async (): Promise<void> => {
     closeModal()
     resetForm()
     await load()
+    showToast(locale.value === "de" ? "Inhalt gespeichert." : "Content saved.")
   } catch (err: any) {
     error.value = err?.response?.data?.detail || (locale.value === "de" ? "Speichern fehlgeschlagen" : "Save failed")
+    showToast(locale.value === "de" ? "Speichern fehlgeschlagen." : "Save failed.", "error")
   }
 }
 
@@ -133,6 +149,7 @@ const onFileSelected = async (event: Event): Promise<void> => {
 const remove = async (id: string): Promise<void> => {
   await api.delete(`/contents/${id}`)
   await load()
+  showToast(locale.value === "de" ? "Inhalt geloescht." : "Content deleted.")
 }
 
 const editSelected = (): void => {
@@ -159,8 +176,15 @@ const typeLabel = (value: string): string => {
 
 const sourceSummary = (item: Content): string => {
   try {
-    const cfg = JSON.parse(item.config_json) as { url?: string; asset_path?: string; html?: string }
+    const cfg = JSON.parse(item.config_json) as { url?: string; asset_path?: string; html?: string; webpage_mode?: string }
     if (item.type === "html") return locale.value === "de" ? "Inline HTML" : "Inline HTML"
+    if (item.type === "webpage") {
+      const mode = String(cfg.webpage_mode || "embedded").toLowerCase() === "direct"
+        ? (locale.value === "de" ? "Direkt" : "Direct")
+        : (locale.value === "de" ? "Eingebettet" : "Embedded")
+      if (cfg.url) return `${cfg.url} (${mode})`
+      return mode
+    }
     if (cfg.asset_path) return cfg.asset_path
     if (cfg.url) return cfg.url
   } catch {
@@ -183,6 +207,8 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener("keydown", onEsc)
 })
+
+useUnsavedChangesGuard(isDirty, locale)
 </script>
 
 <template>

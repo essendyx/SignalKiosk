@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue"
+import { computed, onMounted, ref } from "vue"
 import api from "../api"
 import { useI18n } from "../i18n"
+import { useUnsavedChangesGuard } from "../composables/useUnsavedChangesGuard"
+import { showToast } from "../state/toast"
 
 interface Preset { id: string; name: string }
 interface Schedule { id: string; name: string; preset_id: string; start_time: string; end_time: string; weekdays: string; timezone: string; priority: number; enabled: boolean }
@@ -16,6 +18,7 @@ const timezone = ref("UTC")
 const priority = ref(0)
 const editingId = ref<string | null>(null)
 const { locale, t } = useI18n()
+const isDirty = computed(() => Boolean(name.value.trim() || editingId.value || startTime.value !== "08:00" || endTime.value !== "18:00" || timezone.value !== "UTC" || priority.value !== 0))
 
 const load = async (): Promise<void> => {
   const [s, p] = await Promise.all([api.get("/schedules"), api.get("/presets")])
@@ -35,6 +38,7 @@ const save = async (): Promise<void> => {
   priority.value = 0
   editingId.value = null
   await load()
+  showToast(locale.value === "de" ? "Zeitplan gespeichert." : "Schedule saved.")
 }
 
 const editItem = (item: Schedule): void => {
@@ -50,9 +54,11 @@ const editItem = (item: Schedule): void => {
 const remove = async (id: string): Promise<void> => {
   await api.delete(`/schedules/${id}`)
   await load()
+  showToast(locale.value === "de" ? "Zeitplan geloescht." : "Schedule deleted.")
 }
 
 onMounted(load)
+useUnsavedChangesGuard(isDirty, locale)
 </script>
 
 <template>

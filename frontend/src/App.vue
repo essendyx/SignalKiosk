@@ -2,10 +2,12 @@
 import { computed } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import { useI18n } from "./i18n"
+import { useToastState } from "./state/toast"
 
 const route = useRoute()
 const router = useRouter()
 const { locale, setLocale, t } = useI18n()
+const toast = useToastState()
 const isLoginRoute = computed(() => route.path === "/login")
 const playbackUrl = computed(() => {
   const playbackPort = import.meta.env.VITE_PLAYBACK_PORT || "8090"
@@ -49,6 +51,10 @@ const handleLocaleChange = (event: Event): void => {
     </main>
   </div>
   <router-view v-else />
+  <div v-if="toast.visible" class="toast" :class="toast.type" role="status" aria-live="polite">
+    <span>{{ toast.message }}</span>
+    <button type="button" class="toast-close" @click="toast.hideToast">x</button>
+  </div>
 </template>
 
 <style scoped>
@@ -76,6 +82,34 @@ button:hover { background: rgba(216, 229, 241, 0.16); }
 .locale-picker select { border-radius: 8px; border: 1px solid rgba(173, 204, 224, 0.6); background: rgba(255, 255, 255, 0.1); color: #e5f0f8; min-height: 36px; padding: 6px 8px; }
 .locale-picker select option { color: #123247; background: #ffffff; }
 button { margin-top: 8px; }
+.toast {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 200;
+  min-width: 260px;
+  max-width: 480px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  border-radius: 12px;
+  padding: 12px 14px;
+  border: 1px solid;
+  box-shadow: 0 14px 35px rgba(12, 27, 38, 0.22);
+  font-weight: 600;
+}
+.toast.success { background: #e8f5ee; border-color: #b9dec8; color: #1f5b3a; }
+.toast.error { background: #faeceb; border-color: #e2c1bf; color: #7c2623; }
+.toast-close {
+  margin: 0;
+  min-height: 30px;
+  border-radius: 8px;
+  padding: 4px 8px;
+  border: 1px solid rgba(0, 0, 0, 0.16);
+  background: rgba(255, 255, 255, 0.5);
+  color: inherit;
+}
 @media (max-width: 1000px) { .shell { grid-template-columns: 1fr; } }
 </style>
 

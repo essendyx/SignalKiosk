@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue"
+import { computed, onMounted, ref } from "vue"
 import api from "../api"
 import { useI18n } from "../i18n"
+import { useUnsavedChangesGuard } from "../composables/useUnsavedChangesGuard"
+import { showToast } from "../state/toast"
 
 interface SettingEntry {
   key: string
@@ -14,6 +16,7 @@ const newKey = ref("")
 const newValue = ref('{"value":""}')
 const error = ref("")
 const { locale, t } = useI18n()
+const isDirty = computed(() => Boolean(newKey.value.trim() || newValue.value !== '{"value":""}'))
 
 const load = async (): Promise<void> => {
   const res = await api.get("/system/settings")
@@ -23,6 +26,7 @@ const load = async (): Promise<void> => {
 const save = async (item: SettingEntry): Promise<void> => {
   await api.put(`/system/settings/${item.key}`, { key: item.key, value: item.value })
   await load()
+  showToast(locale.value === "de" ? "Einstellung gespeichert." : "Setting saved.")
 }
 
 const create = async (): Promise<void> => {
@@ -33,12 +37,15 @@ const create = async (): Promise<void> => {
     newKey.value = ""
     newValue.value = '{"value":""}'
     await load()
+    showToast(locale.value === "de" ? "Einstellung gespeichert." : "Setting saved.")
   } catch {
     error.value = "JSON-Format ungueltig. Beispiel: {\"value\":\"text\"}"
+    showToast(locale.value === "de" ? "Speichern fehlgeschlagen." : "Save failed.", "error")
   }
 }
 
 onMounted(load)
+useUnsavedChangesGuard(isDirty, locale)
 </script>
 
 <template>
