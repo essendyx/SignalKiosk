@@ -202,8 +202,8 @@ useUnsavedChangesGuard(isDirty, locale)
 
     <div class="card webhook-help">
       <h3>{{ locale === 'de' ? 'Aufruf und Authentifizierung' : 'Call and authentication' }}</h3>
-      <p>{{ locale === 'de' ? 'Sende POST-Requests an /webhook. Authentifiziere mit token als Query-Parameter oder als Header X-SignalKiosk-Token.' : 'Send POST requests to /webhook. Authenticate using token query parameter or X-SignalKiosk-Token header.' }}</p>
-      <pre><code>curl -X POST "http://localhost:8080/webhook?token=YOUR_TOKEN" -H "Content-Type: application/json" -d "{\"content_type\":\"webpage\",\"url\":\"https://status.example.org\",\"duration_seconds\":120,\"apply_mode\":\"replace_now\"}"</code></pre>
+      <p>{{ locale === 'de' ? 'Sende POST-Requests an /webhook auf dem Backend-Port (PLAYBACK_PORT, standardmaessig 8081). Authentifiziere mit token als Query-Parameter oder als Header X-SignalKiosk-Token.' : 'Send POST requests to /webhook on the backend port (PLAYBACK_PORT, default 8081). Authenticate using token query parameter or X-SignalKiosk-Token header.' }}</p>
+      <pre><code>curl -X POST "http://&lt;SERVER-IP&gt;:8081/webhook?token=YOUR_TOKEN" -H "Content-Type: application/json" -d "{\"content_type\":\"webpage\",\"url\":\"https://status.example.org\",\"duration_seconds\":120,\"apply_mode\":\"replace_now\"}"</code></pre>
 
       <h3>{{ locale === 'de' ? 'Felder im Request' : 'Request fields' }}</h3>
       <ul>
